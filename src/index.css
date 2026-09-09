@@ -1,1 +1,48 @@
 @import 'tailwindcss';
+
+/*
+  Design tokens for the Clinic Stock Console.
+
+  This is an internal operations tool used on ward tablets, often glanced
+  at quickly on a poor connection. The palette prioritises legibility and
+  clear status signalling over visual personality.
+*/
+@theme {
+  --color-ink: #1c2129;
+  --color-slate: #5b6472;
+  --color-paper: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-line: #e2e4e9;
+
+  --color-teal: #0b6e63;
+  --color-teal-deep: #094f47;
+
+  --color-amber: #a3610a;
+  --color-amber-bg: #fdf3e3;
+  --color-red: #b3261e;
+  --color-red-bg: #fbeae9;
+  --color-green: #2f7d4f;
+  --color-green-bg: #e9f5ee;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Keyboard focus must always be visible - never suppressed. */
+:focus-visible {
+  outline: 2px solid var(--color-teal);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
