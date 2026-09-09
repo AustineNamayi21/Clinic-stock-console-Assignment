@@ -23,9 +23,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
   if (!user) {
     const returnTo = buildReturnTo(location.pathname, location.search);
-    return (
-      <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace />
-    );
+    return <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace />;
   }
 
   return <>{children}</>;

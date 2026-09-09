@@ -31,9 +31,7 @@ export function EmptyState({
       className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-line py-16 text-center"
     >
       <p className="font-medium text-ink">{title}</p>
-      {description && (
-        <p className="max-w-sm text-sm text-slate">{description}</p>
-      )}
+      {description && <p className="max-w-sm text-sm text-slate">{description}</p>}
       {action}
     </div>
   );

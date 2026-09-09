@@ -65,9 +65,7 @@ export function useUpdateStock(productId: number) {
     mutationFn: (stock: number) => updateStock(client, productId, stock),
     onMutate: async (stock: number) => {
       await queryClient.cancelQueries({ queryKey: stockKeys.item(productId) });
-      const previous = queryClient.getQueryData<Product>(
-        stockKeys.item(productId),
-      );
+      const previous = queryClient.getQueryData<Product>(stockKeys.item(productId));
       // Optimistic update: reflect the new count immediately rather than
       // leaving the user waiting with no feedback on a slow connection.
       queryClient.setQueryData<Product>(stockKeys.item(productId), (old) =>

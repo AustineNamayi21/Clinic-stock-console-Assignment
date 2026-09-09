@@ -33,9 +33,7 @@ export function LoginPage() {
       navigate(returnTo, { replace: true });
     } catch (err) {
       setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Something went wrong. Try again.',
+        err instanceof ApiError ? err.message : 'Something went wrong. Try again.',
       );
     } finally {
       setIsSubmitting(false);
