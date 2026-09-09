@@ -1,13 +1,35 @@
-function App() {
+import { Routes, Route } from 'react-router-dom';
+import { AuthGuard } from './routes/AuthGuard';
+import { LoginPage } from './pages/LoginPage';
+
+export function App() {
   return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold text-teal">Clinic Stock Console</h1>
-      <p className="mt-2 text-slate">Design tokens are working.</p>
-      <button className="mt-4 rounded-md bg-teal px-4 py-2 text-white hover:bg-teal-deep">
-        Test button
-      </button>
-    </div>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/"
+        element={
+          <AuthGuard>
+            <div className="p-8">Stock list goes here</div>
+          </AuthGuard>
+        }
+      />
+      <Route
+        path="/items/:id"
+        element={
+          <AuthGuard>
+            <div className="p-8">Item detail goes here</div>
+          </AuthGuard>
+        }
+      />
+      <Route
+        path="*"
+        element={
+          <div className="flex min-h-screen items-center justify-center text-slate">
+            Page not found.
+          </div>
+        }
+      />
+    </Routes>
   );
 }
-
-export default App;
