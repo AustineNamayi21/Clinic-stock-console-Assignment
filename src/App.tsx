@@ -1,6 +1,9 @@
 import { Routes, Route } from 'react-router-dom';
 import { AuthGuard } from './routes/AuthGuard';
+import { AppShell } from './components/AppShell';
 import { LoginPage } from './pages/LoginPage';
+import { StockListPage } from './pages/StockListPage';
+import { ItemDetailPage } from './pages/ItemDetailPage';
 
 export function App() {
   return (
@@ -10,7 +13,9 @@ export function App() {
         path="/"
         element={
           <AuthGuard>
-            <div className="p-8">Stock list goes here</div>
+            <AppShell>
+              <StockListPage />
+            </AppShell>
           </AuthGuard>
         }
       />
@@ -18,7 +23,9 @@ export function App() {
         path="/items/:id"
         element={
           <AuthGuard>
-            <div className="p-8">Item detail goes here</div>
+            <AppShell>
+              <ItemDetailPage />
+            </AppShell>
           </AuthGuard>
         }
       />

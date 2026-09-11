@@ -23,6 +23,8 @@
   --color-red-bg: #fbeae9;
   --color-green: #2f7d4f;
   --color-green-bg: #e9f5ee;
+
+  --font-mono-nums: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', monospace;
 }
 
 body {
@@ -43,6 +45,29 @@ body {
   outline-offset: 2px;
 }
 
+/* Stock counts are the primary information in this app. Tabular figures
+   keep digits from shifting width as counts change, which matters when
+   scanning a column of numbers or watching one update after a save. */
+.stock-figure {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Content cross-fade when list results change (filter, sort, page). */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fade-in {
+  animation: fade-in 160ms ease-out;
+}
+
+/* Must stay last so it overrides the animations defined above. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
