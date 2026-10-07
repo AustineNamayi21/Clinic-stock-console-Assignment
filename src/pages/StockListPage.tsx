@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParamsState } from '../hooks/useSearchParamsState';
 import { useStockList, useCategories, usePrefetchNextPage } from '../hooks/useStock';
 import { PAGE_SIZE } from '../api/products';
@@ -6,6 +6,7 @@ import { SearchBox } from '../components/SearchBox';
 import { CategoryFilter, SortControl, Pagination } from '../components/StockControls';
 import { StockTable, StockTableSkeleton } from '../components/StockTable';
 import { EmptyState, ErrorState } from '../components/DataState';
+import { describeLoadError } from '../api/errors';
 
 export function StockListPage() {
   const { state, setSearch, setCategory, setSort, setPage, clearFilters } =
@@ -13,6 +14,10 @@ export function StockListPage() {
   const categoriesQuery = useCategories();
   const listQuery = useStockList(state);
   const listTopRef = useRef<HTMLDivElement>(null);
+  // True while the search box holds text that hasn't been committed yet.
+  // The list below still belongs to the previous term, so it is dimmed and
+  // marked busy rather than presented as results for what is typed.
+  const [searchPending, setSearchPending] = useState(false);
 
   usePrefetchNextPage(
     state,
@@ -42,9 +47,13 @@ export function StockListPage() {
 
   const hasFilters = Boolean(state.q || state.category);
   const data = listQuery.data;
-  // While the next page/sort/filter loads, the previous results stay on
-  // screen (dimmed) instead of being replaced by a loading state.
-  const isSwitching = listQuery.isPlaceholderData && listQuery.isFetching;
+  // A page past the end is about to be clamped by the effect above: show
+  // the loading state for that instant rather than a misleading empty page.
+  const outOfRange = Boolean(data && data.page > data.pageCount);
+  // While the next page or sort loads, the previous results stay on screen
+  // (dimmed) instead of being replaced by a loading state.
+  const isSwitching =
+    (listQuery.isPlaceholderData && listQuery.isFetching) || searchPending;
 
   // No data at all: the error replaces the list. Data already on screen
   // and only a background refresh failed: keep the list, say so above it.
@@ -72,7 +81,11 @@ export function StockListPage() {
 
       <div className="mb-5 grid grid-cols-2 gap-2.5 md:flex md:items-center">
         <div className="col-span-2 md:flex-1">
-          <SearchBox committedValue={state.q} onCommit={setSearch} />
+          <SearchBox
+            committedValue={state.q}
+            onCommit={setSearch}
+            onPendingChange={setSearchPending}
+          />
         </div>
         <CategoryFilter
           categories={categoriesQuery.data ?? []}
@@ -83,11 +96,29 @@ export function StockListPage() {
         <SortControl sortBy={state.sortBy} order={state.order} onChange={setSort} />
       </div>
 
-      {listQuery.isPending && <StockTableSkeleton />}
+      {categoriesQuery.isError && (
+        <div
+          role="alert"
+          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber/30 bg-amber-bg px-4 py-3 text-amber"
+        >
+          <span className="font-semibold">
+            Couldn&apos;t load the category list. Search and sorting still work.
+          </span>
+          <button
+            type="button"
+            onClick={() => categoriesQuery.refetch()}
+            className="press h-11 rounded-lg border border-amber/40 bg-surface px-4 font-semibold hover:border-amber"
+          >
+            Reload categories
+          </button>
+        </div>
+      )}
+
+      {(listQuery.isPending || outOfRange) && <StockTableSkeleton />}
 
       {loadFailed && (
         <ErrorState
-          message="Couldn't load the stock list. Check your connection."
+          message={describeLoadError(listQuery.error, 'the stock list')}
           onRetry={() => listQuery.refetch()}
         />
       )}
@@ -110,9 +141,15 @@ export function StockListPage() {
         </div>
       )}
 
-      {data && data.products.length === 0 && (
+      {data && !outOfRange && data.products.length === 0 && (
         <EmptyState
-          title={state.q ? `No items match "${state.q}"` : 'No items in this category'}
+          title={
+            state.q
+              ? `No items match "${state.q}"`
+              : state.category
+                ? 'No items in this category'
+                : 'No stock items to show'
+          }
           description="Try a different search term, or clear the filters to see everything."
           action={
             hasFilters ? (
@@ -128,7 +165,7 @@ export function StockListPage() {
         />
       )}
 
-      {data && data.products.length > 0 && (
+      {data && !outOfRange && data.products.length > 0 && (
         <div
           aria-busy={isSwitching}
           className={`transition-opacity duration-200 ${isSwitching ? 'opacity-55' : ''}`}

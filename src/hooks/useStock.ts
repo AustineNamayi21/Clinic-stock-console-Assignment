@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import {
-  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -92,10 +91,18 @@ export function useStockList(params: StockListParams) {
 
   return useQuery({
     ...stockListQueryOptions(client, queryClient, params),
-    // Keep showing the current page while the next one loads, instead of
-    // replacing the list with a loading state on every page, sort or
-    // filter change. The page dims and the header line shows activity.
-    placeholderData: keepPreviousData,
+    // Paging or re-sorting keeps the current page on screen (dimmed) while
+    // the next one loads, so the list doesn't flash to a loading state.
+    // A new search term or category does NOT: results for a query the user
+    // has already replaced must never be shown, even briefly on a slow
+    // connection, so those show the loading state until the right results
+    // arrive.
+    placeholderData: (previous, previousQuery) => {
+      const prev = previousQuery?.queryKey[2];
+      return prev && prev.q === params.q && prev.category === params.category
+        ? previous
+        : undefined;
+    },
     select,
   });
 }

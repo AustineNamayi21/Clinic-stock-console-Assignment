@@ -6,9 +6,12 @@ const DEBOUNCE_MS = 300;
 export function SearchBox({
   committedValue,
   onCommit,
+  onPendingChange,
 }: {
   committedValue: string;
   onCommit: (value: string) => void;
+  /** Told whether the box holds text that hasn't been committed yet. */
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const [draft, setDraft] = useState(committedValue);
   const [isPending, setIsPending] = useState(false);
@@ -32,6 +35,10 @@ export function SearchBox({
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => onCommit(value), DEBOUNCE_MS);
   }
+
+  useEffect(() => {
+    onPendingChange?.(isPending);
+  }, [isPending, onPendingChange]);
 
   useEffect(() => {
     return () => {

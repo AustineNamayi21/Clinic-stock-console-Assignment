@@ -1,6 +1,7 @@
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { useStockItem } from '../hooks/useStock';
 import { ApiError } from '../api/types';
+import { describeLoadError } from '../api/errors';
 import { ErrorState, EmptyState } from '../components/DataState';
 import { StockCorrectionForm } from '../components/StockCorrectionForm';
 import { StockFigure } from '../components/StockBadge';
@@ -11,10 +12,19 @@ const priceFormat = new Intl.NumberFormat('en-US', {
   currency: 'USD',
 });
 
+/**
+ * Back to the list view the user came from - same search, filter, sort and
+ * page - when they arrived from the list. A deep link opened directly has
+ * no list to return to, so it goes to the default list.
+ */
 function BackLink() {
+  const location = useLocation();
+  const fromList = (location.state as { fromList?: unknown } | null)?.fromList;
+  const search =
+    typeof fromList === 'string' && fromList.startsWith('?') ? fromList : '';
   return (
     <Link
-      to="/"
+      to={`/${search}`}
       className="group mb-3 inline-flex min-h-11 items-center gap-1 rounded-lg font-semibold text-lagoon hover:text-lagoon-deep"
     >
       <ChevronLeft className="h-5 w-5 transition-transform group-hover:-translate-x-0.5" />
@@ -78,7 +88,7 @@ export function ItemDetailPage() {
 
       {query.isError && !notFound && !query.data && (
         <ErrorState
-          message="Couldn't load this item. Check your connection."
+          message={describeLoadError(query.error, 'this item')}
           onRetry={() => query.refetch()}
         />
       )}

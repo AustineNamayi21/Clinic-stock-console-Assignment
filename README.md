@@ -192,7 +192,7 @@ Query keys are built from the exact URL values that produce each response, so go
 
 Several choices reduce how often the user waits, and how much is downloaded:
 
-- **The current page stays on screen while the next loads.** Changing page, sort or filter keeps the previous results visible (dimmed) until the new ones arrive, instead of replacing the list with a loading state each time. The first load shows skeleton rows shaped like the table.
+- **The current page stays on screen while the next page or sort loads.** Paging or re-sorting keeps the previous results visible (dimmed) until the new ones arrive, instead of flashing to a loading state. A new search term or category deliberately does _not_ do this: results for a query the user has replaced must never be shown, so those show the loading state until the right results arrive (see the acceptance checks below). The first load shows skeleton rows shaped like the table.
 - **Items open instantly from the list.** The list already downloads every field the item page shows, so opening an item renders straight away from that data while a fresh copy loads in the background.
 - **The next page is fetched in advance.** Once a page has loaded, the following page is fetched when the browser is idle, so **Next** is usually instant.
 - **Search plus category downloads the match set once.** In that combined mode, the full result set for a search term is cached on its own, so changing the page, sort or category within the same search is worked out locally rather than downloaded again.
@@ -255,6 +255,13 @@ The search input is debounced, and the resulting query state is managed through 
 The older request is also cancelled, not just ignored. Each query passes TanStack Query's `AbortSignal` through to `fetch`, so when a newer search replaces an older one, the older request is aborted rather than left to finish in the background.
 
 I specifically checked this behaviour because the assessment calls out the delayed-search case as something that can expose race conditions.
+
+Two further rules make sure the user never looks at results for a term they have already replaced:
+
+- When the search term (or category) changes, the previous results are removed and the loading state is shown until the new results arrive. Only paging and re-sorting keep the previous page visible while loading.
+- While the search box holds text that hasn't been committed yet (the 300ms debounce), the list below is dimmed and marked busy, so it isn't presented as results for what is being typed.
+
+The full verification against the real API is in the acceptance checks section below.
 
 ---
 
@@ -405,6 +412,7 @@ src/
 │   ├── client.test.ts
 │   ├── client.ts
 │   ├── config.ts
+│   ├── errors.ts
 │   ├── products.test.ts
 │   ├── products.ts
 │   ├── retry.ts
@@ -440,7 +448,9 @@ src/
 │   └── AuthGuard.tsx
 ├── test/
 │   ├── fakeApi.ts
+│   ├── fakeCatalogue.ts
 │   └── setup.ts
+├── App.acceptance.test.tsx
 ├── App.tsx
 ├── index.css
 └── main.tsx
@@ -489,6 +499,10 @@ I also added the Vercel SPA rewrite configuration so that client-side routes can
 I used Vitest for the automated tests.
 
 I focused the tests on areas where a small change could easily introduce a behavioural regression.
+
+## Acceptance tests
+
+`src/App.acceptance.test.tsx` renders the whole app (routes, guard, pages, hooks and API client) against `src/test/fakeCatalogue.ts`, a fake DummyJSON that honours the `delay` parameter (including cancellation) and answers `/http/500` with a 500, the way the real API does. It has one group of tests for each of the five acceptance checks below, and the search test fails if the previous term's results are ever shown while a new term loads.
 
 ## API tests
 
@@ -799,7 +813,48 @@ I would rather identify that honestly than claim that I wrote and fully understo
 
 ---
 
-# 27. Fixes after review
+# 27. Acceptance checks
+
+The brief sets five behaviours the app must meet. Each one is covered by automated tests that run in CI, and each was also checked by hand in a browser against the real DummyJSON API, at desktop width and at 360px.
+
+## 1. Search never shows results for a query the user has replaced
+
+**How:** the search box debounces for 300ms before writing the term to the URL; the query key comes from the URL, so each term is a separate query; a superseded request is aborted; and a new term clears the old results and shows the loading state instead of keeping them on screen. While uncommitted text is in the search box, the list is dimmed and marked busy.
+
+**Checked against the real API:** I made every "laptop" search carry DummyJSON's `delay=3000`, typed "laptop", let it commit, then replaced it with "phone". A watcher on the page recorded what the table showed on every change. No laptop result was ever displayed once the search said "phone", the delayed laptop request was cancelled (it shows as aborted), and the phone results appeared as soon as they arrived. Searching "laptop" again showed the loading state, not the phone results, until the delayed response landed.
+
+## 2. Changing the category or sort never strands the user on an empty page
+
+**How:** changing the search, category or sort always returns to page 1. A page past the end (for example from an old shared link) is moved to the last page with results, and the loading state is shown for that moment rather than an empty page.
+
+**Checked against the real API:** from page 8 of all items, choosing Smartphones went to page 1 of 16 items; from page 6, changing the sort to lowest stock went to page 1 of the new order; `/?category=laptops&page=7` opened on page 1 of 5 items. A watcher confirmed no empty state appeared at any point.
+
+## 3. Reloading, or opening a copied URL elsewhere, restores the same view
+
+**How:** search, category, sort and page live only in the URL. On reload the session is restored (refreshing an expired access token), and a signed-out visitor is sent to sign in with a `returnTo` that brings them back to the full URL.
+
+**Checked against the real API:** I set up search "e", Groceries, highest price first, page 2 using the controls, then reloaded. The search box, both selects, the page and the exact seven rows were identical. With the session cleared to stand in for another machine, opening the same link went to sign-in and, after signing in, back to the identical view. Opening an item from that list and using the "Stock list" link also returns to the same view, not the default list.
+
+## 4. Every data screen has loading, empty and error states, and errors can be recovered from
+
+| Screen        | Loading                  | Empty                                         | Error and recovery                                                                                                                                           |
+| ------------- | ------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Stock list    | Skeleton rows            | "No items match …" with **Clear filters**     | Message naming the failure, with **Try again**. If counts are already on screen and only a refresh fails, they stay visible with a notice and **Try again**. |
+| Item page     | Skeleton                 | "Item not found" with a link back to the list | Message naming the failure, with **Try again**                                                                                                               |
+| Category list | Category picker disabled | —                                             | Notice with **Reload categories**; search and sorting keep working                                                                                           |
+| Sign in       | "Signing in…"            | —                                             | Inline message; the form stays filled in to try again                                                                                                        |
+
+**Checked against the real API:** I redirected every product request to DummyJSON's `/http/500`. The stock list and the item page each showed their loading state, retried once automatically, then showed "the stock service returned an error (500)" with **Try again**. With requests restored, **Try again** loaded the data on both screens. The automated tests also cover the category-list error and its reload.
+
+## 5. The whole app works with a keyboard alone and is readable at 360px
+
+**How:** every control is a native button, link, input or select with a visible focus ring; a skip link is the first stop on a freshly loaded page; on navigation, focus moves to the start of the new page's content; on the last or first page, focus moves from the disabled pagination button to the other one. Below tablet width the list becomes stacked cards, and every touch target is at least 44px.
+
+**Checked in the browser at 360 × 780:** using only the keyboard I signed in, searched, changed the sort, opened an item, raised the count with **+** and saved it, returned to the same list with the "Stock list" link, and paged with **Next**. Focus was visible at every step and nothing on any screen scrolled sideways.
+
+---
+
+# 28. Fixes after review
 
 After the build was finished, I asked Claude to review the whole project. It found four bugs that the original tests did not cover. Each was reproduced with a test first, fixed, and now has a regression test that fails against the old code.
 
@@ -810,9 +865,18 @@ After the build was finished, I asked Claude to review the whole project. It fou
 
 The review also found that a rejected refresh left the user on an error screen instead of returning them to the login page, and that a failed refresh logged an unhandled promise rejection. Both are fixed.
 
+Working through the acceptance checks above found four more problems, each fixed with a regression test:
+
+- **Quick successive changes could undo each other.** Each URL update started from the URL as of the last render, so changing the category and then the sort before the screen updated dropped the category. Updates now build on the most recent change.
+- **The back link lost the list view.** "Stock list" on an item page went to the default list; it now returns to the search, filter, sort and page the item was opened from.
+- **A failed category list had no error state.** It now shows a notice with **Reload categories**.
+- **Focus could be left on a disabled button.** Reaching the last page disabled **Next** while it had focus; focus now moves to **Previous**.
+
+While improving performance, I briefly made new search terms keep the previous term's results on screen while loading. The acceptance test for check 1 caught it, and that optimisation now applies only to paging and sorting.
+
 ---
 
-# 28. Further development
+# 29. Further development
 
 I completed and tested the implementation against the requirements of the assessment, including the main application flows, error handling, authentication behaviour, URL state, responsive behaviour, keyboard interaction, API edge cases and the required development checks.
 
@@ -826,6 +890,6 @@ If this were being developed into a production inventory system rather than a ta
 
 These are extensions to the current system rather than gaps in the assessment implementation. I kept the submitted solution focused on the requirements and constraints of the take-home assessment.
 
-# 29. Time spent
+# 30. Time spent
 
 I spent approximately 5 hours cumulatively working on this project across different days.

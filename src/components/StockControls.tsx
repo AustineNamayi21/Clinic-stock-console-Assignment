@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { SortField, SortOrder } from '../api/products';
 import { ChevronLeft, ChevronRight } from './Icons';
 
@@ -34,6 +35,12 @@ export function CategoryFilter({
         className={`select ${CONTROL} disabled:opacity-60 md:w-52`}
       >
         <option value="">All categories</option>
+        {/* A category from the URL is shown even before (or if) the list of
+            categories loads, so a reloaded or shared link never displays
+            "All categories" over a filtered list. */}
+        {value && !categories.includes(value) && (
+          <option value={value}>{categoryName(value)}</option>
+        )}
         {categories.map((c) => (
           <option key={c} value={c}>
             {categoryName(c)}
@@ -125,6 +132,20 @@ export function Pagination({
   total: number;
   onChange: (page: number) => void;
 }) {
+  const previousRef = useRef<HTMLButtonElement>(null);
+  const nextRef = useRef<HTMLButtonElement>(null);
+
+  // Reaching the first or last page disables the button that was just
+  // pressed. Hand keyboard focus to the other one, so a keyboard user isn't
+  // left sitting on a control that no longer does anything.
+  useEffect(() => {
+    if (page >= pageCount && document.activeElement === nextRef.current) {
+      previousRef.current?.focus();
+    } else if (page <= 1 && document.activeElement === previousRef.current) {
+      nextRef.current?.focus();
+    }
+  }, [page, pageCount]);
+
   return (
     <nav
       aria-label="Stock list pages"
@@ -132,6 +153,7 @@ export function Pagination({
     >
       <button
         type="button"
+        ref={previousRef}
         onClick={() => onChange(page - 1)}
         disabled={page <= 1}
         className={PAGE_BUTTON}
@@ -147,6 +169,7 @@ export function Pagination({
 
       <button
         type="button"
+        ref={nextRef}
         onClick={() => onChange(page + 1)}
         disabled={page >= pageCount}
         className={PAGE_BUTTON}

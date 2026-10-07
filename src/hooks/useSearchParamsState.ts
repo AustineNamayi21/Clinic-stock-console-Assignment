@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { SortField, SortOrder, StockListParams } from '../api/products';
 
@@ -49,6 +49,28 @@ export interface UseSearchParamsStateResult {
 export function useSearchParamsState(): UseSearchParamsStateResult {
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // React Router hands a functional update the params from the last
+  // render, not from the last update. Two changes made before the screen
+  // re-renders (category then sort on a slow tablet, say) would otherwise
+  // each start from the same old URL, and the second would silently undo
+  // the first. Every update below starts from this ref instead: it holds
+  // the most recent URL this hook produced, and is re-synced from the
+  // router after each render (which also picks up back/forward).
+  const latest = useRef(searchParams);
+  useLayoutEffect(() => {
+    latest.current = searchParams;
+  }, [searchParams]);
+
+  const update = useCallback(
+    (change: (next: URLSearchParams) => void, options?: { replace?: boolean }) => {
+      const next = new URLSearchParams(latest.current);
+      change(next);
+      latest.current = next;
+      setSearchParams(next, options);
+    },
+    [setSearchParams],
+  );
+
   const state = useMemo<StockListParams>(
     () => ({
       q: searchParams.get('q') ?? DEFAULTS.q,
@@ -62,70 +84,57 @@ export function useSearchParamsState(): UseSearchParamsStateResult {
 
   const setSearch = useCallback(
     (q: string) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
+      // Replace rather than push, so Back isn't filled with every search term.
+      update(
+        (next) => {
           if (q) next.set('q', q);
           else next.delete('q');
           next.set('page', '1');
-          return next;
         },
         { replace: true },
       );
     },
-    [setSearchParams],
+    [update],
   );
 
   const setCategory = useCallback(
     (category: string) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
+      update((next) => {
         if (category) next.set('category', category);
         else next.delete('category');
         next.set('page', '1');
-        return next;
       });
     },
-    [setSearchParams],
+    [update],
   );
 
   const setSort = useCallback(
     (sortBy: SortField, order: SortOrder) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
+      update((next) => {
         next.set('sortBy', sortBy);
         next.set('order', order);
         next.set('page', '1');
-        return next;
       });
     },
-    [setSearchParams],
+    [update],
   );
 
   const setPage = useCallback(
     (page: number) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
+      update((next) => {
         next.set('page', String(page));
-        return next;
       });
     },
-    [setSearchParams],
+    [update],
   );
 
-  // Clearing search and category must be a single URL update. Calling
-  // setSearch('') then setCategory('') doesn't work: React Router hands
-  // each functional update the params from the current render, so the
-  // second call starts from a URL that still has `q` and puts it back.
   const clearFilters = useCallback(() => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
+    update((next) => {
       next.delete('q');
       next.delete('category');
       next.set('page', '1');
-      return next;
     });
-  }, [setSearchParams]);
+  }, [update]);
 
   return { state, setSearch, setCategory, setSort, setPage, clearFilters };
 }

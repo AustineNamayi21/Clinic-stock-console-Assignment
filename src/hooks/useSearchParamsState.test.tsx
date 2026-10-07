@@ -71,6 +71,24 @@ describe('useSearchParamsState', () => {
     });
   });
 
+  it('keeps every change when several are made before the screen updates', () => {
+    const { result } = renderWithRouter(['/?q=gauze&page=3']);
+
+    act(() => {
+      result.current.setCategory('wound-care');
+      result.current.setSort('price', 'desc');
+      result.current.setPage(2);
+    });
+
+    expect(result.current.state).toEqual({
+      q: 'gauze',
+      category: 'wound-care',
+      sortBy: 'price',
+      order: 'desc',
+      page: 2,
+    });
+  });
+
   it('changing only the page does not reset other committed state', () => {
     const { result } = renderWithRouter(['/?q=gauze&category=wound-care']);
 

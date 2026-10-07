@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import type { Product } from '../api/types';
 import { StockFigure } from './StockBadge';
 import { ChevronRight } from './Icons';
@@ -17,6 +17,11 @@ function CategoryTag({ category }: { category: string }) {
 }
 
 export function StockTable({ products }: { products: Product[] }) {
+  // Item links carry the list's URL (search, filter, sort, page), so the
+  // item page's back link returns to exactly this view.
+  const { search } = useLocation();
+  const listState = { fromList: search };
+
   // Remount the rows only when the set of items changes (a new page, sort
   // or filter), so the arrival animation plays then - not on every
   // background refetch of the same page.
@@ -53,6 +58,7 @@ export function StockTable({ products }: { products: Product[] }) {
                       only one focusable element per item. */}
                   <Link
                     to={`/items/${p.id}`}
+                    state={listState}
                     className="font-semibold text-ink after:absolute after:inset-0 after:content-[''] group-hover:text-lagoon-deep"
                   >
                     {p.title}
@@ -82,6 +88,7 @@ export function StockTable({ products }: { products: Product[] }) {
           <li key={p.id} style={{ '--i': i } as CSSProperties} className="row-in">
             <Link
               to={`/items/${p.id}`}
+              state={listState}
               className="press flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4 active:border-lagoon active:bg-lagoon-bg/40"
             >
               <div className="min-w-0">
