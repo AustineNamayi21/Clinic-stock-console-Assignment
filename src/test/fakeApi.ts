@@ -15,6 +15,8 @@ export interface FakeApi {
   offline: boolean;
   /** Optional hook to delay or fail PUTs. */
   onPut?: () => Promise<Response>;
+  /** Optional hook to delay GET /products/7. */
+  onItem?: () => Promise<Response>;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -22,6 +24,33 @@ function json(body: unknown, status = 200): Response {
 }
 
 export const TEST_USER = { id: 1, username: 'emilys' };
+
+/** The single item the fake /products list returns. */
+export const LISTED_ITEM = {
+  id: 7,
+  title: 'Sterile gauze',
+  description: '',
+  category: 'wound-care',
+  price: 4,
+  stock: 42,
+  thumbnail: '',
+  images: [],
+};
+
+/** 25 wound-care matches and 5 from another category, for search + category. */
+export const SEARCH_MATCHES = [
+  ...Array.from({ length: 25 }, (_, i) => ({
+    ...LISTED_ITEM,
+    id: 100 + i,
+    title: `Bandage ${i}`,
+  })),
+  ...Array.from({ length: 5 }, (_, i) => ({
+    ...LISTED_ITEM,
+    id: 200 + i,
+    title: `Bandage scissors ${i}`,
+    category: 'tools',
+  })),
+];
 
 export function installFakeApi(initialValidToken: string): FakeApi {
   const api: FakeApi = {
@@ -61,6 +90,21 @@ export function installFakeApi(initialValidToken: string): FakeApi {
       if (method === 'PUT') {
         if (api.onPut) return api.onPut();
         return json({ id: 1, stock: JSON.parse(String(init.body)).stock });
+      }
+      if (path.startsWith('/products/search')) {
+        return json({
+          products: SEARCH_MATCHES,
+          total: SEARCH_MATCHES.length,
+          skip: 0,
+          limit: 0,
+        });
+      }
+      if (path.startsWith('/products?')) {
+        return json({ products: [LISTED_ITEM], total: 1, skip: 0, limit: 20 });
+      }
+      if (path === '/products/7') {
+        if (api.onItem) return api.onItem();
+        return json(LISTED_ITEM);
       }
       if (path.startsWith('/products/1')) {
         return json({ id: 1, title: 'Gauze', category: 'x', stock: 3 });

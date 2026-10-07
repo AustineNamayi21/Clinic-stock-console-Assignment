@@ -64,6 +64,7 @@ I used:
 - React Router 7
 - TanStack Query 5
 - Tailwind CSS 4
+- Manrope (self-hosted variable font via Fontsource)
 - Vitest 5
 - ESLint 10
 - Prettier 3
@@ -90,15 +91,16 @@ The main pages are:
 
 The main reusable UI components are:
 
-- `AppShell` — header, sign-out, skip link and the `<main>` focus target
-- `StockTable` — table on wider screens, stacked cards on narrow ones
+- `AppShell` — the persistent layout for signed-in pages: header, sign-out, skip link, activity line and the `<main>` focus target
+- `StockTable` — table on wider screens, stacked cards on narrow ones, plus `StockTableSkeleton` for the first load
 - `CategoryFilter`, `SortControl` and `Pagination` (in `StockControls.tsx`)
 - `SearchBox`
 - `StockCorrectionForm`
-- `StockFigure` (in `StockBadge.tsx`)
+- `StockFigure` and `StockVial` (in `StockBadge.tsx`)
+- Small inline icons (in `Icons.tsx`), all decorative and hidden from screen readers
 - `LoadingState`, `EmptyState` and `ErrorState` (in `DataState.tsx`)
 
-I also have an `AuthGuard` route component that protects the authenticated application routes.
+I also have an `AuthGuard` route component that protects the authenticated application routes. The signed-in pages are nested routes under one layout route (`AuthGuard` + `AppShell` + `<Outlet />`), so the header stays mounted while the user moves between the list and an item instead of being rebuilt on every navigation.
 
 `StockFigure` is the exported component in `StockBadge.tsx`. The component was originally named around the stock-badge idea, but the exported component is now `StockFigure`.
 
@@ -184,7 +186,18 @@ Query keys are built from the exact URL values that produce each response, so go
 
 - **Stock list and item detail:** treated as fresh for 30 seconds. Stock counts can change after a physical count at any time, so I would rather refetch slightly too often than show a stale count.
 - **Categories:** treated as fresh for 10 minutes, because they rarely change and refetching them on every visit would waste requests on a patchy connection.
-- **Failed list, item and category requests:** retried once automatically before an error state is shown. Saves are not retried automatically, so a correction is never sent twice without the user knowing.
+- **Failed list, item and category requests:** network and server failures are retried once automatically before an error state is shown. Requests the server rejected (4xx, such as an item that doesn't exist) are not retried, because the answer won't change; that policy is `src/api/retry.ts`. Saves are never retried automatically, so a correction is never sent twice without the user knowing.
+
+## Performance on a slow connection
+
+Several choices reduce how often the user waits, and how much is downloaded:
+
+- **The current page stays on screen while the next loads.** Changing page, sort or filter keeps the previous results visible (dimmed) until the new ones arrive, instead of replacing the list with a loading state each time. The first load shows skeleton rows shaped like the table.
+- **Items open instantly from the list.** The list already downloads every field the item page shows, so opening an item renders straight away from that data while a fresh copy loads in the background.
+- **The next page is fetched in advance.** Once a page has loaded, the following page is fetched when the browser is idle, so **Next** is usually instant.
+- **Search plus category downloads the match set once.** In that combined mode, the full result set for a search term is cached on its own, so changing the page, sort or category within the same search is worked out locally rather than downloaded again.
+- **Corrections show everywhere immediately.** Pages subscribe to the correction store, so a saved count appears in the list as soon as it is made, without waiting for a refetch.
+- **The font is self-hosted.** Manrope is bundled with the app and split by character set, so only the Latin file (about 25 KB) is downloaded, with no request to an external font service. The browser also opens its connection to DummyJSON while the app is still loading.
 
 ---
 
@@ -278,7 +291,7 @@ Stock correction is handled on the individual item page.
 
 The form validates the entered quantity before submitting the change: it must be a whole number of 0 or more. The validation message is linked to the input with `aria-describedby`, and **Save count** is disabled while the number is unchanged or a save is in progress.
 
-If the item is refetched in the background while someone is typing, the form does not overwrite the number they are entering.
+Large **−** and **+** buttons either side of the count make small corrections easy on a tablet without opening the keyboard. If the item is refetched in the background while someone is typing, the form does not overwrite the number they are entering. When a save succeeds, a tick draws itself next to the confirmation and the new count settles into place at the top of the page.
 
 When the mutation starts, the displayed item is updated optimistically and the correction is written to the session override store straight away. If the request fails, both the displayed value and the previous override are restored.
 
@@ -302,15 +315,15 @@ I created reusable states in `DataState.tsx`.
 
 These include:
 
-- Loading state
+- Loading state, and skeleton placeholders shaped like the table and the item page
 - Empty state
 - Error state with retry, signalled by an icon and text as well as colour
 
-The stock list and item detail screens use these states for their main API requests.
+The stock list and item detail screens use these states for their main API requests. If counts are already on screen and only a background refresh fails, the list stays visible with a short notice and a **Try again** button above it, instead of being replaced by an error.
 
 The category control is disabled while categories are loading.
 
-The item detail page also handles an invalid or unavailable item rather than assuming that a valid product will always be returned. A malformed link such as `/items/abc` shows an "Invalid item link" message. An ID that doesn't exist, such as `/items/99999`, currently shows the general "Couldn't load this item" error with a retry button; a dedicated "item not found" message would be clearer, because retrying cannot help in that case.
+The item detail page also handles an invalid or unavailable item rather than assuming that a valid product will always be returned. A malformed link such as `/items/abc` shows an "Invalid item link" message. An ID that doesn't exist, such as `/items/99999`, shows "Item not found" without a retry button, because retrying cannot help.
 
 Unknown routes show a "Page not found" message instead of a blank screen.
 
@@ -336,10 +349,11 @@ The application includes:
 - Validation errors linked to their input with `aria-describedby` and `aria-invalid`
 - Stock status shown as a word as well as a colour, never colour alone
 - Animations reduced to near zero when the operating system asks for reduced motion
+- Touch targets of at least 44px: inputs, selects and pagination buttons are 48px tall, and the count buttons are 56px
 
 `AppShell` contains the skip link and the main content target.
 
-The `<main>` element uses `focus:outline-none` because it is being used as a programmatic focus target after route changes rather than as an interactive control. The visible focus treatment is intended for controls that the user can actually interact with.
+The `<main>` element uses `focus:outline-none` because it is being used as a programmatic focus target after route changes rather than as an interactive control. The visible focus treatment is intended for controls that the user can actually interact with. The global focus style is defined in Tailwind's base layer so that this utility can override it; when it sat outside the layers, it overrode the utility and drew a focus box around the whole page after a direct page load.
 
 I also designed the stock list to work at narrow widths. At smaller breakpoints, the table changes to a stacked layout so that the interface remains usable around the 360px requirement.
 
@@ -347,20 +361,37 @@ I also designed the stock list to work at narrow widths. At smaller breakpoints,
 
 # 13. Visual design
 
-I wanted the interface to feel like an internal clinic application rather than a generic dashboard.
+The interface is built for ward staff glancing at a tablet, so the stock count is always the most prominent thing on screen. The palette is black, white and blue-green:
 
-The primary accent is **teal**, using `#0b6e63`, with:
+- **Black** for the header and the sign-in panel, so the app's frame is unmistakable.
+- **White** surfaces on a very light cool-grey page, so content cards stand out.
+- **Lagoon** (`#00707a`), a blue-green, for every action: buttons, links, focus rings and category tags.
+- **A blue-to-green gradient**, used in only two places: the stock vial and the activity line under the header.
+- **Amber, red and green** only for stock and save status.
 
-- Clear contrast between content and background
-- Stronger visual emphasis for important actions
-- Consistent spacing and rounded surfaces
-- Responsive layouts for the stock list and forms
+These are named colours in `src/index.css` (`ink`, `slate`, `paper`, `surface`, `line`, `lagoon`, `aqua` and the status colours), each with one job, rather than Tailwind's numbered scale. Every text colour meets the WCAG AA contrast ratio of 4.5:1 against the backgrounds it is used on; the lowest is the status green on the page background at 4.9:1.
 
-I used Tailwind CSS for the styling and kept the visual design fairly restrained so that the stock information remains the main focus.
+The typeface is **Manrope**, a geometric sans-serif that stays legible at small sizes and has tabular figures. Stock counts use those tabular figures, so digits keep the same width and a number doesn't shift when a count changes.
 
-Instead of Tailwind's numbered colour scale, I defined a small set of named colours in `src/index.css`, each with one job: `ink` (main text), `slate` (secondary text), `paper` (page background), `surface` (cards and inputs), `line` (borders), `teal` (actions and focus), and `amber`, `red` and `green` for stock and save status. Every text colour meets the WCAG AA contrast ratio of 4.5:1 against the backgrounds it is used on; the lowest is amber on the page background at 4.6:1.
+## The stock vial
 
-Stock counts use tabular figures, so digits keep the same width and a number doesn't shift when a count changes. The stock count is the largest, most prominent text in each row and on the item page, because it is the main information in the app.
+Next to each count is a small vial filled to that count (capped at 100), with a tick marking the "low" threshold. It is blue-green when stock is fine, amber when low, and an empty dashed red outline when out of stock. It is decorative and hidden from screen readers, because the number and status word already carry the information; it makes low and empty items easy to spot when scanning a list.
+
+## Motion
+
+Every animation answers something that happened, and only `transform` and `opacity` are animated so they stay smooth on low-powered tablets:
+
+- The line under the header flows while any request is in flight, so loading is visible from every screen without a spinner taking over the content.
+- Vials fill when a page of results first appears, and rows arrive in a quick stagger, only when the set of items changes, not on every background refresh.
+- A corrected count settles into place, and the save confirmation draws a tick.
+- Buttons respond to a press, and skeleton placeholders shimmer while the first load is in progress.
+- The sign-in panel has two soft blue-green lights drifting slowly behind the heading: the app's one purely ambient animation.
+
+All of it is switched off when the operating system asks for reduced motion.
+
+## Layout
+
+The list is a table from tablet width up and stacked cards below it, with the search box full width and the category and sort controls side by side on a phone. Each table row is one large link target, while still having only one focusable element per item. The item page puts the count beside the title, with the image and details on one side and the correction form on the other, collapsing to a single column on a phone. I checked every screen at 360px wide and on desktop in a browser, including keyboard focus.
 
 ---
 
@@ -376,6 +407,7 @@ src/
 │   ├── config.ts
 │   ├── products.test.ts
 │   ├── products.ts
+│   ├── retry.ts
 │   └── types.ts
 ├── auth/
 │   ├── AuthContext.test.tsx
@@ -383,6 +415,7 @@ src/
 ├── components/
 │   ├── AppShell.tsx
 │   ├── DataState.tsx
+│   ├── Icons.tsx
 │   ├── SearchBox.tsx
 │   ├── StockBadge.tsx
 │   ├── StockControls.tsx
@@ -393,7 +426,8 @@ src/
 │   ├── useSearchParamsState.test.tsx
 │   ├── useSearchParamsState.ts
 │   ├── useStock.test.tsx
-│   └── useStock.ts
+│   ├── useStock.ts
+│   └── useStockPerformance.test.tsx
 ├── lib/
 │   ├── stockLevel.ts
 │   ├── stockOverrides.test.ts
@@ -499,6 +533,15 @@ I focused the tests on areas where a small change could easily introduce a behav
 - Saving a correction after the access token has expired mid-session
 - A second correction of the same item showing immediately while it saves
 - A failed save restoring the previous corrected value
+
+## Performance tests
+
+`src/hooks/useStockPerformance.test.tsx` covers:
+
+- An item opened from the list rendering immediately from list data, before its own request returns
+- Paging and re-sorting within a search + category downloading the search match set only once
+- The current page staying on screen while the next one loads
+- The retry policy: network and server failures are retried once, rejected requests (such as a missing item) are not
 
 I chose these areas because they contain actual application logic rather than simply checking whether a component renders.
 

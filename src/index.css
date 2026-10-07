@@ -1,70 +1,313 @@
+@import '@fontsource-variable/manrope';
 @import 'tailwindcss';
 
 /*
   Design tokens for the Clinic Stock Console.
 
-  This is an internal operations tool used on ward tablets, often glanced
-  at quickly on a poor connection. The palette prioritises legibility and
-  clear status signalling over visual personality.
+  An internal tool for a clinic's supplies team, used on ward tablets and
+  often glanced at quickly on a poor connection. Black and white carry the
+  structure; a blue-green "lagoon" carries every action; the blue-to-green
+  gradient is reserved for the one signature element - the stock vial and
+  the activity line under the header. Every text colour meets WCAG AA
+  (4.5:1) against the backgrounds it is used on.
 */
 @theme {
-  --color-ink: #1c2129;
-  --color-slate: #5b6472;
-  --color-paper: #f7f8fa;
+  --font-sans: 'Manrope Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --color-black: #000000;
+  --color-white: #ffffff;
+  --color-ink: #000000;
+  --color-slate: #4a5a60;
+  --color-paper: #f2f6f7;
   --color-surface: #ffffff;
-  --color-line: #e2e4e9;
+  --color-line: #dbe4e7;
+  --color-on-black-muted: #a9b8bd;
 
-  --color-teal: #0b6e63;
-  --color-teal-deep: #094f47;
+  --color-lagoon: #00707a;
+  --color-lagoon-deep: #00545c;
+  --color-lagoon-bg: #e3f3f4;
+  --color-aqua: #3ee6c8;
+  --color-blue: #1f6fe0;
+  --color-leaf: #12b886;
 
-  --color-amber: #a3610a;
-  --color-amber-bg: #fdf3e3;
-  --color-red: #b3261e;
-  --color-red-bg: #fbeae9;
-  --color-green: #2f7d4f;
-  --color-green-bg: #e9f5ee;
-
-  --font-mono-nums: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', monospace;
+  --color-amber: #9a5800;
+  --color-amber-bg: #fdf1e1;
+  --color-red: #bf1f2b;
+  --color-red-bg: #fdecec;
+  --color-green: #0f7a5a;
+  --color-green-bg: #e3f5ee;
 }
 
-body {
-  margin: 0;
-  background: var(--color-paper);
-  color: var(--color-ink);
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    sans-serif;
-}
+/* Base styles live in the base layer, so utilities such as
+   focus:outline-none on <main> can override them. */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
 
-/* Keyboard focus must always be visible - never suppressed. */
-:focus-visible {
-  outline: 2px solid var(--color-teal);
-  outline-offset: 2px;
+  body {
+    margin: 0;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'ss01';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Keyboard focus must always be visible - never suppressed. */
+  :focus-visible {
+    outline: 2px solid var(--color-lagoon);
+    outline-offset: 2px;
+  }
+
+  .on-black :focus-visible {
+    outline-color: var(--color-aqua);
+  }
 }
 
 /* Stock counts are the primary information in this app. Tabular figures
-   keep digits from shifting width as counts change, which matters when
-   scanning a column of numbers or watching one update after a save. */
+   keep digits from shifting width as counts change. */
 .stock-figure {
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
-/* Content cross-fade when list results change (filter, sort, page). */
-@keyframes fade-in {
+/* ---- Signature: the activity line under the header -------------------
+   A thin blue-to-green line. While any request is in flight a brighter
+   band flows along it, so "something is loading" is visible from every
+   screen without a spinner taking over the content. Only transform and
+   opacity are animated, so it stays on the compositor. */
+.flow-line {
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  background: linear-gradient(
+    90deg,
+    var(--color-blue),
+    var(--color-aqua),
+    var(--color-leaf)
+  );
+}
+
+.flow-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.85), transparent);
+  transform: translateX(-100%);
+  opacity: 0;
+}
+
+.flow-line[data-active='true']::after {
+  opacity: 1;
+  animation: flow 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes flow {
+  to {
+    transform: translateX(260%);
+  }
+}
+
+/* ---- Signature: the stock vial ----------------------------------------
+   A small vial that fills to the current count (capped at 100), with a
+   tick at the "low" threshold. It fills once when it first appears and
+   glides when a count is corrected. */
+.vial {
+  position: relative;
+  overflow: hidden;
+  border: 1.5px solid var(--color-line);
+  border-radius: 999px 999px 6px 6px;
+  background: var(--color-white);
+}
+
+.vial-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: bottom;
+  transform: scaleY(var(--fill));
+  transition: transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: vial-in 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 30ms + 120ms);
+}
+
+.vial[data-level='ok'] .vial-fill {
+  background: linear-gradient(0deg, var(--color-leaf), var(--color-blue));
+}
+
+.vial[data-level='low'] {
+  border-color: #f0c98f;
+}
+
+.vial[data-level='low'] .vial-fill {
+  background: linear-gradient(0deg, #e08a00, #f3b23f);
+}
+
+.vial[data-level='out'] {
+  border-color: var(--color-red);
+  border-style: dashed;
+}
+
+.vial-tick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10%;
+  height: 1px;
+  background: rgb(0 0 0 / 0.25);
+}
+
+@keyframes vial-in {
   from {
+    transform: scaleY(0);
+  }
+}
+
+/* A count that has just changed (after a save) settles into place. */
+.count-change {
+  display: inline-block;
+  animation: count-change 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes count-change {
+  from {
+    transform: translateY(35%);
     opacity: 0;
   }
-  to {
-    opacity: 1;
+}
+
+/* ---- Content transitions ---------------------------------------------- */
+
+/* A new page of results arrives row by row - quick enough not to delay
+   reading, and only when the set of items actually changes. */
+.row-in {
+  animation: row-in 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 22ms);
+}
+
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
   }
 }
 
-.fade-in {
-  animation: fade-in 160ms ease-out;
+.page-enter {
+  animation: page-enter 260ms ease-out both;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* Loading placeholders shaped like the content they stand in for. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #e6edef;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.7), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Saved confirmation: the tick draws itself once. */
+.check-draw path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: check-draw 420ms 80ms ease-out forwards;
+}
+
+@keyframes check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Buttons acknowledge a press. */
+.press {
+  transition:
+    transform 120ms ease-out,
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    color 150ms ease-out,
+    box-shadow 150ms ease-out;
+}
+
+.press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Login panel: two soft blue-green lights drifting slowly behind the
+   wordmark. The page's one ambient animation. */
+.glow {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(60px);
+  opacity: 0.55;
+  will-change: transform;
+}
+
+.glow-a {
+  background: var(--color-blue);
+  animation: drift-a 18s ease-in-out infinite alternate;
+}
+
+.glow-b {
+  background: var(--color-leaf);
+  animation: drift-b 22s ease-in-out infinite alternate;
+}
+
+@keyframes drift-a {
+  to {
+    transform: translate(18%, 22%) scale(1.15);
+  }
+}
+
+@keyframes drift-b {
+  to {
+    transform: translate(-20%, -16%) scale(0.9);
+  }
+}
+
+/* Native select with a drawn chevron, so it matches the other controls
+   but keeps the platform picker on tablets. */
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%234a5a60'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z' clip-rule='evenodd'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 1.1rem;
+  padding-right: 2.25rem;
+}
+
+/* Hide the number spinners: the form has its own larger - and + buttons. */
+.no-spin::-webkit-outer-spin-button,
+.no-spin::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.no-spin {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 /* Must stay last so it overrides the animations defined above. */
@@ -73,6 +316,9 @@ body {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

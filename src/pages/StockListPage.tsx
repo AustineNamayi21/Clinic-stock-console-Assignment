@@ -1,35 +1,79 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSearchParamsState } from '../hooks/useSearchParamsState';
-import { useStockList, useCategories } from '../hooks/useStock';
+import { useStockList, useCategories, usePrefetchNextPage } from '../hooks/useStock';
+import { PAGE_SIZE } from '../api/products';
 import { SearchBox } from '../components/SearchBox';
 import { CategoryFilter, SortControl, Pagination } from '../components/StockControls';
-import { StockTable } from '../components/StockTable';
-import { LoadingState, EmptyState, ErrorState } from '../components/DataState';
+import { StockTable, StockTableSkeleton } from '../components/StockTable';
+import { EmptyState, ErrorState } from '../components/DataState';
 
 export function StockListPage() {
   const { state, setSearch, setCategory, setSort, setPage, clearFilters } =
     useSearchParamsState();
   const categoriesQuery = useCategories();
   const listQuery = useStockList(state);
+  const listTopRef = useRef<HTMLDivElement>(null);
+
+  usePrefetchNextPage(
+    state,
+    listQuery.isPlaceholderData ? undefined : listQuery.data?.pageCount,
+  );
 
   // A valid-but-out-of-range page (from a stale shared link, or a filter
   // that shrank the result set) is clamped to the last available page once
   // the real total is known. This is what stops a filter change stranding
   // the user on an empty page.
   useEffect(() => {
-    if (!listQuery.data) return;
+    if (!listQuery.data || listQuery.isPlaceholderData) return;
     const { page, pageCount } = listQuery.data;
     if (page > pageCount) setPage(pageCount);
-  }, [listQuery.data, setPage]);
+  }, [listQuery.data, listQuery.isPlaceholderData, setPage]);
+
+  function changePage(page: number) {
+    setPage(page);
+    // Pagination sits below the list: bring the top of the new page into
+    // view rather than leaving the user at the bottom of it.
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    listTopRef.current?.scrollIntoView({
+      block: 'start',
+      behavior: reduceMotion ? 'auto' : 'smooth',
+    });
+  }
 
   const hasFilters = Boolean(state.q || state.category);
+  const data = listQuery.data;
+  // While the next page/sort/filter loads, the previous results stay on
+  // screen (dimmed) instead of being replaced by a loading state.
+  const isSwitching = listQuery.isPlaceholderData && listQuery.isFetching;
+
+  // No data at all: the error replaces the list. Data already on screen
+  // and only a background refresh failed: keep the list, say so above it.
+  const loadFailed = listQuery.isError && !data;
+  const refreshFailed = listQuery.isError && Boolean(data);
+
+  const firstItem = data ? (data.page - 1) * PAGE_SIZE + 1 : 0;
+  const lastItem = data ? firstItem + data.products.length - 1 : 0;
 
   return (
     <div>
-      <h1 className="mb-4 text-lg font-semibold text-ink">Stock list</h1>
+      <div
+        ref={listTopRef}
+        className="mb-5 flex scroll-mt-24 flex-wrap items-end justify-between gap-x-6 gap-y-1"
+      >
+        <h1 className="text-3xl font-extrabold tracking-tight text-ink sm:text-4xl">
+          Stock list
+        </h1>
+        <p className="text-slate" aria-live="polite">
+          {data && data.total > 0
+            ? `Showing ${firstItem}–${lastItem} of ${data.total} items`
+            : ' '}
+        </p>
+      </div>
 
-      <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center">
-        <SearchBox committedValue={state.q} onCommit={setSearch} />
+      <div className="mb-5 grid grid-cols-2 gap-2.5 md:flex md:items-center">
+        <div className="col-span-2 md:flex-1">
+          <SearchBox committedValue={state.q} onCommit={setSearch} />
+        </div>
         <CategoryFilter
           categories={categoriesQuery.data ?? []}
           value={state.category}
@@ -39,16 +83,34 @@ export function StockListPage() {
         <SortControl sortBy={state.sortBy} order={state.order} onChange={setSort} />
       </div>
 
-      {listQuery.isPending && <LoadingState label="Loading stock…" />}
+      {listQuery.isPending && <StockTableSkeleton />}
 
-      {listQuery.isError && (
+      {loadFailed && (
         <ErrorState
-          message="Couldn't load the stock list."
+          message="Couldn't load the stock list. Check your connection."
           onRetry={() => listQuery.refetch()}
         />
       )}
 
-      {listQuery.isSuccess && listQuery.data.products.length === 0 && (
+      {refreshFailed && (
+        <div
+          role="alert"
+          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber/30 bg-amber-bg px-4 py-3 text-amber"
+        >
+          <span className="font-semibold">
+            Couldn't refresh. These are the last counts that loaded.
+          </span>
+          <button
+            type="button"
+            onClick={() => listQuery.refetch()}
+            className="press h-11 rounded-lg border border-amber/40 bg-surface px-4 font-semibold hover:border-amber"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
+      {data && data.products.length === 0 && (
         <EmptyState
           title={state.q ? `No items match "${state.q}"` : 'No items in this category'}
           description="Try a different search term, or clear the filters to see everything."
@@ -57,7 +119,7 @@ export function StockListPage() {
               <button
                 type="button"
                 onClick={clearFilters}
-                className="mt-2 rounded-md border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface"
+                className="press mt-3 h-11 rounded-xl bg-lagoon px-5 font-semibold text-white hover:bg-lagoon-deep"
               >
                 Clear filters
               </button>
@@ -66,18 +128,21 @@ export function StockListPage() {
         />
       )}
 
-      {listQuery.isSuccess && listQuery.data.products.length > 0 && (
-        <>
-          <StockTable products={listQuery.data.products} />
+      {data && data.products.length > 0 && (
+        <div
+          aria-busy={isSwitching}
+          className={`transition-opacity duration-200 ${isSwitching ? 'opacity-55' : ''}`}
+        >
+          <StockTable products={data.products} />
           <div className="mt-5">
             <Pagination
-              page={listQuery.data.page}
-              pageCount={listQuery.data.pageCount}
-              total={listQuery.data.total}
-              onChange={setPage}
+              page={data.page}
+              pageCount={data.pageCount}
+              total={data.total}
+              onChange={changePage}
             />
           </div>
-        </>
+        </div>
       )}
     </div>
   );

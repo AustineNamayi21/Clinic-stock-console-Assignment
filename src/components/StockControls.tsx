@@ -1,4 +1,14 @@
 import type { SortField, SortOrder } from '../api/products';
+import { ChevronLeft, ChevronRight } from './Icons';
+
+/** 'kitchen-accessories' -> 'Kitchen accessories' */
+function categoryName(slug: string) {
+  const words = slug.replace(/-/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const CONTROL =
+  'h-12 w-full rounded-xl border border-line bg-surface px-3.5 text-base text-ink transition-colors hover:border-slate/40 focus:border-lagoon';
 
 export function CategoryFilter({
   categories,
@@ -21,12 +31,12 @@ export function CategoryFilter({
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-line bg-surface px-3 py-2 text-ink disabled:opacity-60 sm:w-auto"
+        className={`select ${CONTROL} disabled:opacity-60 md:w-52`}
       >
         <option value="">All categories</option>
         {categories.map((c) => (
           <option key={c} value={c}>
-            {c.replace(/-/g, ' ')}
+            {categoryName(c)}
           </option>
         ))}
       </select>
@@ -40,31 +50,31 @@ const SORT_OPTIONS: Array<{
   order: SortOrder;
   label: string;
 }> = [
-  { value: 'title-asc', sortBy: 'title', order: 'asc', label: 'Name (A–Z)' },
-  { value: 'title-desc', sortBy: 'title', order: 'desc', label: 'Name (Z–A)' },
+  { value: 'title-asc', sortBy: 'title', order: 'asc', label: 'Name A–Z' },
+  { value: 'title-desc', sortBy: 'title', order: 'desc', label: 'Name Z–A' },
   {
     value: 'stock-asc',
     sortBy: 'stock',
     order: 'asc',
-    label: 'Stock (lowest first)',
+    label: 'Lowest stock',
   },
   {
     value: 'stock-desc',
     sortBy: 'stock',
     order: 'desc',
-    label: 'Stock (highest first)',
+    label: 'Highest stock',
   },
   {
     value: 'price-asc',
     sortBy: 'price',
     order: 'asc',
-    label: 'Price (lowest first)',
+    label: 'Lowest price',
   },
   {
     value: 'price-desc',
     sortBy: 'price',
     order: 'desc',
-    label: 'Price (highest first)',
+    label: 'Highest price',
   },
 ];
 
@@ -89,7 +99,7 @@ export function SortControl({
           const opt = SORT_OPTIONS.find((o) => o.value === e.target.value);
           if (opt) onChange(opt.sortBy, opt.order);
         }}
-        className="w-full rounded-md border border-line bg-surface px-3 py-2 text-ink sm:w-auto"
+        className={`select ${CONTROL} md:w-48`}
       >
         {SORT_OPTIONS.map((o) => (
           <option key={o.value} value={o.value}>
@@ -100,6 +110,9 @@ export function SortControl({
     </div>
   );
 }
+
+const PAGE_BUTTON =
+  'press inline-flex h-12 items-center gap-1.5 rounded-xl border border-line bg-surface px-4 font-semibold text-ink hover:border-lagoon hover:text-lagoon-deep disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-line disabled:hover:text-ink';
 
 export function Pagination({
   page,
@@ -115,29 +128,31 @@ export function Pagination({
   return (
     <nav
       aria-label="Stock list pages"
-      className="flex items-center justify-between gap-4 border-t border-line pt-4"
+      className="flex items-center justify-between gap-3"
     >
       <button
         type="button"
         onClick={() => onChange(page - 1)}
         disabled={page <= 1}
-        className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+        className={PAGE_BUTTON}
       >
+        <ChevronLeft className="h-5 w-5" />
         Previous
       </button>
 
       <span className="text-center text-sm text-slate" aria-live="polite">
-        Page {page} of {pageCount}
-        <span className="hidden sm:inline"> · {total} items</span>
+        Page <span className="font-bold text-ink">{page}</span> of {pageCount}
+        <span className="hidden sm:inline">, {total} items</span>
       </span>
 
       <button
         type="button"
         onClick={() => onChange(page + 1)}
         disabled={page >= pageCount}
-        className="rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+        className={PAGE_BUTTON}
       >
         Next
+        <ChevronRight className="h-5 w-5" />
       </button>
     </nav>
   );

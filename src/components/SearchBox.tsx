@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { SearchIcon, Spinner } from './Icons';
 
 const DEBOUNCE_MS = 300;
 
@@ -39,18 +40,26 @@ export function SearchBox({
   }, []);
 
   return (
-    <div className="flex-1">
+    <div className="relative flex-1">
       <label htmlFor="stock-search" className="sr-only">
         Search stock by name
       </label>
+      <SearchIcon className="pointer-events-none absolute top-1/2 left-3.5 h-5 w-5 -translate-y-1/2 text-slate" />
       <input
         id="stock-search"
         type="search"
         placeholder="Search stock…"
+        autoComplete="off"
+        enterKeyHint="search"
         value={draft}
         onChange={(e) => handleChange(e.target.value)}
-        className="w-full rounded-md border border-line bg-surface px-3 py-2 text-ink placeholder:text-slate"
+        className="h-12 w-full rounded-xl border border-line bg-surface pr-3.5 pl-11 text-base text-ink transition-colors placeholder:text-slate hover:border-slate/40 focus:border-lagoon"
       />
+      {isPending && (
+        <span className="absolute top-1/2 right-3.5 -translate-y-1/2 text-lagoon">
+          <Spinner />
+        </span>
+      )}
       <span role="status" aria-live="polite" className="sr-only">
         {isPending ? `Searching for ${draft}` : ''}
       </span>

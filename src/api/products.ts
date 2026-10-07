@@ -63,16 +63,20 @@ export async function fetchStockList(
   client: ApiClient,
   params: StockListParams,
   signal?: AbortSignal,
+  /**
+   * Supplies the full search result set for the search+category path.
+   * The query hook passes a cached version, so changing the page, sort or
+   * category for the same search term doesn't refetch the whole set.
+   */
+  loadAllMatches: (q: string) => Promise<Product[]> = (q) =>
+    fetchAllSearchMatches(client, q, signal),
 ): Promise<StockListResult> {
   const { q, category, sortBy, order, page } = params;
   const skip = (page - 1) * PAGE_SIZE;
 
   if (q && category) {
-    const res = await client.fetch<ProductListResponse>(
-      `/products/search?q=${encodeURIComponent(q)}&limit=0&select=${SELECT_FIELDS}`,
-      { signal },
-    );
-    const matching = res.products.filter((p) => p.category === category);
+    const all = await loadAllMatches(q);
+    const matching = all.filter((p) => p.category === category);
     const sorted = sortProducts(matching, sortBy, order);
     return {
       products: paginate(sorted, page, PAGE_SIZE),
@@ -122,6 +126,19 @@ export async function fetchStockList(
     pageCount: Math.max(1, Math.ceil(res.total / PAGE_SIZE)),
     source: 'all',
   };
+}
+
+/** Every product matching a search term, in one request (`limit=0`). */
+export async function fetchAllSearchMatches(
+  client: ApiClient,
+  q: string,
+  signal?: AbortSignal,
+): Promise<Product[]> {
+  const res = await client.fetch<ProductListResponse>(
+    `/products/search?q=${encodeURIComponent(q)}&limit=0&select=${SELECT_FIELDS}`,
+    { signal },
+  );
+  return res.products;
 }
 
 export async function fetchProduct(
