@@ -129,8 +129,8 @@
   transform-origin: bottom;
   transform: scaleY(var(--fill));
   transition: transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
-  animation: vial-in 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  animation-delay: calc(var(--i, 0) * 30ms + 120ms);
+  animation: vial-in 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(min(var(--i, 0), 8) * 15ms + 60ms);
 }
 
 .vial[data-level='ok'] .vial-fill {
@@ -180,11 +180,13 @@
 
 /* ---- Content transitions ---------------------------------------------- */
 
-/* A new page of results arrives row by row - quick enough not to delay
-   reading, and only when the set of items actually changes. */
+/* A new page of results arrives with a brief ripple down the rows, only
+   when the set of items actually changes. It is kept short - the whole
+   page settles within about a quarter of a second - and only the first
+   eight rows are staggered, so it never delays reading the results. */
 .row-in {
-  animation: row-in 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  animation-delay: calc(var(--i, 0) * 22ms);
+  animation: row-in 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(min(var(--i, 0), 8) * 12ms);
 }
 
 @keyframes row-in {

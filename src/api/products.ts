@@ -31,20 +31,103 @@ function paginate<T>(items: T[], page: number, pageSize: number): T[] {
   return items.slice(start, start + pageSize);
 }
 
-function sortProducts(
+// Sorting and searching done in the browser must give exactly the results
+// DummyJSON would, so a list never changes order or contents depending on
+// whether it came from the server or was worked out locally. These mirror
+// DummyJSON's own implementation (src/utils/util.js sortArray and
+// src/controllers/product.js searchProducts in github.com/Ovi/DummyJSON).
+
+// Case-insensitive and number-aware: "iPhone 9" sorts before "iPhone 13".
+const titleCollator = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
+
+function compareValues(a: unknown, b: unknown): number {
+  if (a === b) return 0;
+  if (typeof a === 'string' && typeof b === 'string')
+    return titleCollator.compare(a, b);
+  return (a as number) > (b as number) ? 1 : -1;
+}
+
+export function sortProducts(
   products: Product[],
   sortBy: SortField,
   order: SortOrder,
 ): Product[] {
-  const sorted = [...products].sort((a, b) => {
+  const direction = order === 'asc' ? 1 : -1;
+  return [...products].sort((a, b) => {
     const av = a[sortBy];
     const bv = b[sortBy];
-    if (typeof av === 'string' && typeof bv === 'string') {
-      return av.localeCompare(bv);
-    }
-    return (av as number) - (bv as number);
+    // Items without the field always go last, as on the server.
+    const aMissing = av === undefined || av === null;
+    const bMissing = bv === undefined || bv === null;
+    if (aMissing || bMissing) return Number(aMissing) - Number(bMissing);
+    return compareValues(av, bv) * direction;
   });
-  return order === 'desc' ? sorted.reverse() : sorted;
+}
+
+/** Normalises a search term the way DummyJSON does before matching. */
+export function normaliseSearchTerm(q: string): string {
+  return q.trim().toLowerCase().split('-').join(' ');
+}
+
+/**
+ * DummyJSON's search rule: the term appears in the title or the
+ * description, ignoring case. Runs over a catalogue held in the browser.
+ */
+export function searchCatalogue(catalogue: Product[], q: string): Product[] {
+  const term = normaliseSearchTerm(q);
+  return catalogue.filter(
+    (p) =>
+      p.title.toLowerCase().includes(term) ||
+      p.description.toLowerCase().includes(term),
+  );
+}
+
+function pageOf(
+  matches: Product[],
+  params: StockListParams,
+  source: StockListResult['source'],
+): StockListResult {
+  const sorted = sortProducts(matches, params.sortBy, params.order);
+  return {
+    products: paginate(sorted, params.page, PAGE_SIZE),
+    total: sorted.length,
+    page: params.page,
+    pageCount: Math.max(1, Math.ceil(sorted.length / PAGE_SIZE)),
+    source,
+  };
+}
+
+/**
+ * One page of search results worked out from the whole catalogue, exactly
+ * as DummyJSON would return it (search, then category, sort and page).
+ */
+export function stockPageFromCatalogue(
+  catalogue: Product[],
+  params: StockListParams,
+): StockListResult {
+  const matches = searchCatalogue(catalogue, params.q);
+  return params.category
+    ? pageOf(
+        matches.filter((p) => p.category === params.category),
+        params,
+        'search+category',
+      )
+    : pageOf(matches, params, 'search');
+}
+
+export interface StockListSources {
+  /**
+   * The whole catalogue if it is already held in the browser, or
+   * undefined when it isn't. When present, searches are worked out locally
+   * with no request at all.
+   */
+  catalogue?: () => Product[] | undefined;
+  /**
+   * Supplies the full search result set for the search+category path.
+   * The query hook passes a cached version, so changing the page, sort or
+   * category for the same search term doesn't refetch the whole set.
+   */
+  loadAllMatches?: (q: string) => Promise<Product[]>;
 }
 
 /**
@@ -63,28 +146,26 @@ export async function fetchStockList(
   client: ApiClient,
   params: StockListParams,
   signal?: AbortSignal,
-  /**
-   * Supplies the full search result set for the search+category path.
-   * The query hook passes a cached version, so changing the page, sort or
-   * category for the same search term doesn't refetch the whole set.
-   */
-  loadAllMatches: (q: string) => Promise<Product[]> = (q) =>
-    fetchAllSearchMatches(client, q, signal),
+  sources: StockListSources = {},
 ): Promise<StockListResult> {
   const { q, category, sortBy, order, page } = params;
   const skip = (page - 1) * PAGE_SIZE;
+  const loadAllMatches =
+    sources.loadAllMatches ??
+    ((term: string) => fetchAllSearchMatches(client, term, signal));
+
+  // Fast path: the whole catalogue is already in the browser, so any
+  // search (with or without a category) is answered locally, instantly.
+  const catalogue = q ? sources.catalogue?.() : undefined;
+  if (catalogue) return stockPageFromCatalogue(catalogue, params);
 
   if (q && category) {
     const all = await loadAllMatches(q);
-    const matching = all.filter((p) => p.category === category);
-    const sorted = sortProducts(matching, sortBy, order);
-    return {
-      products: paginate(sorted, page, PAGE_SIZE),
-      total: sorted.length,
-      page,
-      pageCount: Math.max(1, Math.ceil(sorted.length / PAGE_SIZE)),
-      source: 'search+category',
-    };
+    return pageOf(
+      all.filter((p) => p.category === category),
+      params,
+      'search+category',
+    );
   }
 
   if (q) {
@@ -126,6 +207,21 @@ export async function fetchStockList(
     pageCount: Math.max(1, Math.ceil(res.total / PAGE_SIZE)),
     source: 'all',
   };
+}
+
+/**
+ * The whole catalogue (194 items) in one request, with only the fields the
+ * app shows. Fetched once in the background so searches can run locally.
+ */
+export async function fetchCatalogue(
+  client: ApiClient,
+  signal?: AbortSignal,
+): Promise<Product[]> {
+  const res = await client.fetch<ProductListResponse>(
+    `/products?limit=0&select=${SELECT_FIELDS}`,
+    { signal },
+  );
+  return res.products;
 }
 
 /** Every product matching a search term, in one request (`limit=0`). */

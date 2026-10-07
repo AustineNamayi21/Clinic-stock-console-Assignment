@@ -8,9 +8,11 @@ import {
 import { useApiClient } from './useApiClient';
 import {
   fetchAllSearchMatches,
+  fetchCatalogue,
   fetchCategories,
   fetchProduct,
   fetchStockList,
+  stockPageFromCatalogue,
   updateStock,
   type StockListParams,
   type StockListResult,
@@ -33,6 +35,7 @@ export const stockKeys = {
   list: (params: StockListParams) => ['products', 'list', params] as const,
   item: (id: number) => ['products', 'item', id] as const,
   searchMatches: (q: string) => ['products', 'search-matches', q] as const,
+  catalogue: () => ['products', 'catalogue'] as const,
   categories: () => ['categories'] as const,
 };
 
@@ -54,6 +57,45 @@ function useStockOverrides() {
   );
 }
 
+function catalogueQueryOptions(client: ApiClient) {
+  return {
+    queryKey: stockKeys.catalogue(),
+    queryFn: ({ signal }: { signal: AbortSignal }) => fetchCatalogue(client, signal),
+    staleTime: STOCK_STALE_TIME,
+  };
+}
+
+/**
+ * The whole catalogue, if it has been downloaded. If it is older than the
+ * stale time it is still used - searching stays instant - and a fresh copy
+ * is fetched in the background; when that arrives, open searches are
+ * recomputed from it.
+ */
+function catalogueForSearch(
+  client: ApiClient,
+  queryClient: QueryClient,
+): { products: Product[]; updatedAt: number } | undefined {
+  const state = queryClient.getQueryState<Product[]>(stockKeys.catalogue());
+  if (!state?.data) return undefined;
+  const stale =
+    state.isInvalidated || Date.now() - state.dataUpdatedAt > STOCK_STALE_TIME;
+  if (stale && state.fetchStatus === 'idle') {
+    queryClient
+      .fetchQuery(catalogueQueryOptions(client))
+      .then(() =>
+        queryClient.invalidateQueries({
+          queryKey: ['products', 'list'],
+          predicate: (query) => Boolean((query.queryKey[2] as StockListParams)?.q),
+        }),
+      )
+      .catch(() => {
+        // Keep using the copy we have; a real error will surface on the
+        // next request that needs the network.
+      });
+  }
+  return { products: state.data, updatedAt: state.dataUpdatedAt };
+}
+
 function stockListQueryOptions(
   client: ApiClient,
   queryClient: QueryClient,
@@ -62,18 +104,42 @@ function stockListQueryOptions(
   return {
     queryKey: stockKeys.list(params),
     queryFn: ({ signal }: { signal: AbortSignal }) =>
-      fetchStockList(client, params, signal, (q) =>
-        // The full match set for a search term is cached on its own, so
-        // paging, sorting or switching category within the same search is
-        // computed locally instead of downloading every match again.
-        queryClient.fetchQuery({
-          queryKey: stockKeys.searchMatches(q),
-          queryFn: ({ signal: s }) => fetchAllSearchMatches(client, q, s),
-          staleTime: STOCK_STALE_TIME,
-        }),
-      ),
+      fetchStockList(client, params, signal, {
+        catalogue: () => catalogueForSearch(client, queryClient)?.products,
+        // Until the catalogue has arrived, the full match set for a search
+        // term is cached on its own, so paging, sorting or switching
+        // category within the same search doesn't download it again.
+        loadAllMatches: (q) =>
+          queryClient.fetchQuery({
+            queryKey: stockKeys.searchMatches(q),
+            queryFn: ({ signal: s }) => fetchAllSearchMatches(client, q, s),
+            staleTime: STOCK_STALE_TIME,
+          }),
+      }),
     staleTime: STOCK_STALE_TIME,
   };
+}
+
+/**
+ * Downloads the whole catalogue in the background once the browser is
+ * idle, so that searches from then on are answered instantly without a
+ * request. It is about 110 KB uncompressed, fetched once and then only
+ * when it is older than the stale time and a search needs it.
+ */
+export function usePrefetchCatalogue() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const run = () => {
+      queryClient.prefetchQuery(catalogueQueryOptions(client));
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(run, { timeout: 3000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(run, 500);
+    return () => window.clearTimeout(id);
+  }, [client, queryClient]);
 }
 
 export function useStockList(params: StockListParams) {
@@ -91,6 +157,17 @@ export function useStockList(params: StockListParams) {
 
   return useQuery({
     ...stockListQueryOptions(client, queryClient, params),
+    // A search the catalogue can answer is ready on the very first render:
+    // no loading state, no request.
+    // (This only reads the cache; if the catalogue is old, the query is
+    // marked stale and its normal refetch refreshes the catalogue.)
+    initialData: () => {
+      if (!params.q) return undefined;
+      const catalogue = queryClient.getQueryData<Product[]>(stockKeys.catalogue());
+      return catalogue ? stockPageFromCatalogue(catalogue, params) : undefined;
+    },
+    initialDataUpdatedAt: () =>
+      queryClient.getQueryState(stockKeys.catalogue())?.dataUpdatedAt,
     // Paging or re-sorting keeps the current page on screen (dimmed) while
     // the next one loads, so the list doesn't flash to a loading state.
     // A new search term or category does NOT: results for a query the user
@@ -129,8 +206,12 @@ export function usePrefetchNextPage(params: StockListParams, pageCount?: number)
   }, [client, queryClient, q, category, sortBy, order, page, pageCount]);
 }
 
-/** Finds an item in any stock-list page already in the cache. */
+/** Finds an item in the catalogue or any stock-list page already cached. */
 function findInListCache(queryClient: QueryClient, id: number): Product | undefined {
+  const fromCatalogue = queryClient
+    .getQueryData<Product[]>(stockKeys.catalogue())
+    ?.find((p) => p.id === id);
+  if (fromCatalogue) return fromCatalogue;
   for (const [, data] of queryClient.getQueriesData<StockListResult>({
     queryKey: ['products', 'list'],
   })) {

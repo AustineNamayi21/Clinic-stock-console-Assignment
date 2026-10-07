@@ -195,7 +195,8 @@ Several choices reduce how often the user waits, and how much is downloaded:
 - **The current page stays on screen while the next page or sort loads.** Paging or re-sorting keeps the previous results visible (dimmed) until the new ones arrive, instead of flashing to a loading state. A new search term or category deliberately does _not_ do this: results for a query the user has replaced must never be shown, so those show the loading state until the right results arrive (see the acceptance checks below). The first load shows skeleton rows shaped like the table.
 - **Items open instantly from the list.** The list already downloads every field the item page shows, so opening an item renders straight away from that data while a fresh copy loads in the background.
 - **The next page is fetched in advance.** Once a page has loaded, the following page is fetched when the browser is idle, so **Next** is usually instant.
-- **Search plus category downloads the match set once.** In that combined mode, the full result set for a search term is cached on its own, so changing the page, sort or category within the same search is worked out locally rather than downloaded again.
+- **Searches are answered in the browser.** Once the stock list has loaded, the whole catalogue (194 items, about 110 KB before compression) is downloaded once in the background. From then on every search, with or without a category, is worked out locally: results appear as soon as the 250ms typing pause ends, with no request. Measured with 0.7 seconds of API latency added to every response, results appeared 180–210ms after the last keystroke, against 1–5 seconds per search over a real connection before. The local search reproduces DummyJSON's own rule exactly (the term is trimmed, lower-cased and has hyphens turned into spaces, then matched against the title or description) and its sort order (case-insensitive, with numbers in names in natural order), both taken from DummyJSON's source code, so results are identical whichever way they were produced. If the catalogue is more than 30 seconds old it is still used, so searching stays instant, and a fresh copy is fetched in the background; open searches are then recomputed from it.
+- **Until the catalogue has arrived, searches use the server.** On a very slow connection the first searches may happen before the download finishes; those go to DummyJSON's search as before, with the full match set for a term cached so paging, sorting or switching category within that search doesn't download it again.
 - **Corrections show everywhere immediately.** Pages subscribe to the correction store, so a saved count appears in the list as soon as it is made, without waiting for a refetch.
 - **The font is self-hosted.** Manrope is bundled with the app and split by character set, so only the Latin file (about 25 KB) is downloaded, with no request to an external font service. The browser also opens its connection to DummyJSON while the app is still loading.
 
@@ -234,7 +235,7 @@ This is necessary because the API does not provide the exact combined query beha
 
 This combined path loads every search match, which is fine for a 194-item catalogue but would not scale to a real one. With a real backend, the server would apply the search and category together and paginate the result.
 
-The current search input is debounced by 300ms. This means I do not send a request for every individual keystroke.
+The current search input is debounced by 250ms. This means I do not send a request for every individual keystroke.
 
 The URL remains the source of truth for the committed search value, so the current search state is also preserved when the page is refreshed or the URL is copied.
 
@@ -259,7 +260,7 @@ I specifically checked this behaviour because the assessment calls out the delay
 Two further rules make sure the user never looks at results for a term they have already replaced:
 
 - When the search term (or category) changes, the previous results are removed and the loading state is shown until the new results arrive. Only paging and re-sorting keep the previous page visible while loading.
-- While the search box holds text that hasn't been committed yet (the 300ms debounce), the list below is dimmed and marked busy, so it isn't presented as results for what is being typed.
+- While the search box holds text that hasn't been committed yet (the 250ms debounce), the list below is dimmed and marked busy, so it isn't presented as results for what is being typed.
 
 The full verification against the real API is in the acceptance checks section below.
 
@@ -499,6 +500,10 @@ I also added the Vercel SPA rewrite configuration so that client-side routes can
 I used Vitest for the automated tests.
 
 I focused the tests on areas where a small change could easily introduce a behavioural regression.
+
+## Search tests
+
+`src/api/products.test.ts` also checks that searching and sorting in the browser match DummyJSON: title-or-description matching, case and whitespace handling, hyphens treated as spaces, natural number order in names, and paging a search + category result from the catalogue. The acceptance tests check that, once the catalogue has downloaded, a search shows its results with no loading state and no request, and that a term found only in descriptions returns the same items the server would.
 
 ## Acceptance tests
 
@@ -819,7 +824,7 @@ The brief sets five behaviours the app must meet. Each one is covered by automat
 
 ## 1. Search never shows results for a query the user has replaced
 
-**How:** the search box debounces for 300ms before writing the term to the URL; the query key comes from the URL, so each term is a separate query; a superseded request is aborted; and a new term clears the old results and shows the loading state instead of keeping them on screen. While uncommitted text is in the search box, the list is dimmed and marked busy.
+**How:** once the catalogue is in the browser, searches are answered locally and synchronously, so there is no slow response that could arrive late. Before it has arrived, searches go to the server, and these rules apply: the search box debounces for 250ms before writing the term to the URL; the query key comes from the URL, so each term is a separate query; a superseded request is aborted; and a new term clears the old results and shows the loading state instead of keeping them on screen. While uncommitted text is in the search box, the list is dimmed and marked busy.
 
 **Checked against the real API:** I made every "laptop" search carry DummyJSON's `delay=3000`, typed "laptop", let it commit, then replaced it with "phone". A watcher on the page recorded what the table showed on every change. No laptop result was ever displayed once the search said "phone", the delayed laptop request was cancelled (it shows as aborted), and the phone results appeared as soon as they arrived. Searching "laptop" again showed the loading state, not the phone results, until the delayed response landed.
 
@@ -865,8 +870,9 @@ After the build was finished, I asked Claude to review the whole project. It fou
 
 The review also found that a rejected refresh left the user on an error screen instead of returning them to the login page, and that a failed refresh logged an unhandled promise rejection. Both are fixed.
 
-Working through the acceptance checks above found four more problems, each fixed with a regression test:
+Working through the acceptance checks above, and measuring search speed, found five more problems, each fixed with a regression test:
 
+- **Searches felt slow.** Each search waited for a round trip to DummyJSON (1–5 seconds over a slow connection) and then a row-by-row entrance animation of up to 0.8 seconds. Searches are now answered from a catalogue held in the browser, and the entrance animation settles in about a quarter of a second.
 - **Quick successive changes could undo each other.** Each URL update started from the URL as of the last render, so changing the category and then the sort before the screen updated dropped the category. Updates now build on the most recent change.
 - **The back link lost the list view.** "Stock list" on an item page went to the default list; it now returns to the search, filter, sort and page the item was opened from.
 - **A failed category list had no error state.** It now shows a notice with **Reload categories**.

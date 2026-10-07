@@ -21,6 +21,8 @@ export interface FakeCatalogue {
   aborted: string[];
   serverDown: boolean;
   categoriesDown: boolean;
+  /** Makes the whole-catalogue download fail, so searches use the server. */
+  catalogueDown: boolean;
   delays: Record<string, number>;
 }
 
@@ -104,6 +106,7 @@ export function installFakeCatalogue(): FakeCatalogue {
     aborted: [],
     serverDown: false,
     categoriesDown: false,
+    catalogueDown: false,
     delays: {},
   };
 
@@ -127,6 +130,13 @@ export function installFakeCatalogue(): FakeCatalogue {
         url = new URL('https://dummyjson.com/http/500');
       }
       if (url.pathname === '/products/categories' && api.categoriesDown) {
+        url = new URL('https://dummyjson.com/http/500');
+      }
+      if (
+        url.pathname === '/products' &&
+        url.searchParams.get('limit') === '0' &&
+        api.catalogueDown
+      ) {
         url = new URL('https://dummyjson.com/http/500');
       }
 
@@ -165,9 +175,15 @@ export function installFakeCatalogue(): FakeCatalogue {
         return json(CATEGORIES.map((slug) => ({ slug, name: slug })));
       }
       if (path === '/products/search') {
-        const term = (params.get('q') ?? '').toLowerCase();
+        // DummyJSON's rule: trimmed, lower-cased, hyphens as spaces, and
+        // matched against the title or the description.
+        const term = (params.get('q') ?? '').trim().toLowerCase().split('-').join(' ');
         return listResponse(
-          CATALOGUE.filter((p) => p.title.toLowerCase().includes(term)),
+          CATALOGUE.filter(
+            (p) =>
+              p.title.toLowerCase().includes(term) ||
+              p.description.toLowerCase().includes(term),
+          ),
           params,
         );
       }

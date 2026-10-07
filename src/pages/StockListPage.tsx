@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParamsState } from '../hooks/useSearchParamsState';
-import { useStockList, useCategories, usePrefetchNextPage } from '../hooks/useStock';
+import {
+  useStockList,
+  useCategories,
+  usePrefetchCatalogue,
+  usePrefetchNextPage,
+} from '../hooks/useStock';
 import { PAGE_SIZE } from '../api/products';
 import { SearchBox } from '../components/SearchBox';
 import { CategoryFilter, SortControl, Pagination } from '../components/StockControls';
@@ -19,6 +24,7 @@ export function StockListPage() {
   // marked busy rather than presented as results for what is typed.
   const [searchPending, setSearchPending] = useState(false);
 
+  usePrefetchCatalogue();
   usePrefetchNextPage(
     state,
     listQuery.isPlaceholderData ? undefined : listQuery.data?.pageCount,

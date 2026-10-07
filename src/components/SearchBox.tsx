@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { SearchIcon, Spinner } from './Icons';
 
-const DEBOUNCE_MS = 300;
+// Long enough that a typed word becomes one search, not one per letter;
+// short enough to feel immediate once results are answered locally.
+const DEBOUNCE_MS = 250;
 
 export function SearchBox({
   committedValue,

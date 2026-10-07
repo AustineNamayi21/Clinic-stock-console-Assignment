@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { fetchStockList, PAGE_SIZE } from './products';
+import {
+  fetchStockList,
+  normaliseSearchTerm,
+  PAGE_SIZE,
+  searchCatalogue,
+  sortProducts,
+  stockPageFromCatalogue,
+} from './products';
 import type { ApiClient } from './client';
 import type { Product, ProductListResponse } from './types';
 
@@ -98,5 +105,50 @@ describe('fetchStockList', () => {
     });
 
     expect(result.source).toBe('all');
+  });
+});
+
+describe('searching and sorting in the browser match DummyJSON', () => {
+  const items = [
+    makeProduct({ id: 1, title: 'iPhone 13', description: 'A phone' }),
+    makeProduct({ id: 2, title: 'iPhone 9', description: 'An older phone' }),
+    makeProduct({ id: 3, title: 'apple juice', description: 'Fresh-pressed' }),
+    makeProduct({ id: 4, title: 'Bandage', description: 'Sterile wound dressing' }),
+  ];
+
+  it('matches the title or description, ignoring case and trimming the term', () => {
+    expect(searchCatalogue(items, '  PHONE ').map((p) => p.id)).toEqual([1, 2]);
+    expect(searchCatalogue(items, 'wound').map((p) => p.id)).toEqual([4]);
+  });
+
+  it('treats hyphens in the term as spaces, as the server does', () => {
+    expect(normaliseSearchTerm('fresh-pressed')).toBe('fresh pressed');
+    expect(searchCatalogue(items, 'fresh-pressed')).toEqual([]);
+  });
+
+  it('sorts names case-insensitively with numbers in natural order', () => {
+    const titles = sortProducts(items, 'title', 'asc').map((p) => p.title);
+    expect(titles).toEqual(['apple juice', 'Bandage', 'iPhone 9', 'iPhone 13']);
+  });
+
+  it('pages a search + category result from the catalogue', () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      makeProduct({ id: i + 1, title: `Gauze ${i + 1}`, category: 'wound-care' }),
+    );
+    const page2 = stockPageFromCatalogue(many, {
+      q: 'gauze',
+      category: 'wound-care',
+      sortBy: 'title',
+      order: 'asc',
+      page: 2,
+    });
+    expect(page2.total).toBe(25);
+    expect(page2.products.map((p) => p.title)).toEqual([
+      'Gauze 21',
+      'Gauze 22',
+      'Gauze 23',
+      'Gauze 24',
+      'Gauze 25',
+    ]);
   });
 });

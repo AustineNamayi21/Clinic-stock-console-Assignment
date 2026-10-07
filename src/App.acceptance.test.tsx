@@ -72,9 +72,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('1. Search never shows results for a replaced query', () => {
+  // These two run with the background catalogue download failing, so every
+  // search goes over the network: the slow-connection case the brief means.
   it('ignores a slow response for an earlier term, even when it arrives last', async () => {
     const user = userEvent.setup();
     signIn();
+    api.catalogueDown = true;
     // DummyJSON's delay parameter on the first term: its response takes
     // 800ms, while the replacement term answers immediately.
     api.delays = { laptop: 800 };
@@ -116,6 +119,7 @@ describe('1. Search never shows results for a replaced query', () => {
   it('does not show the previous term’s results while the new term loads', async () => {
     const user = userEvent.setup();
     signIn();
+    api.catalogueDown = true;
     api.delays = { phone: 600 };
     renderApp('/?q=laptop');
     await waitFor(() => expect(visibleTitles()[0]).toBe('Laptop 01'));
@@ -130,6 +134,37 @@ describe('1. Search never shows results for a replaced query', () => {
     expect(visibleTitles()).toEqual([]);
     expect(screen.getByText('Loading stock…')).toBeInTheDocument();
     await waitFor(() => expect(visibleTitles()[0]).toBe('Phone 01'));
+  });
+});
+
+describe('Searching once the catalogue is in the browser', () => {
+  it('answers searches instantly with no request, matching the server', async () => {
+    const user = userEvent.setup();
+    signIn();
+    renderApp('/');
+    await screen.findByText(/Showing 1–20 of 75 items/);
+    // Wait for the background catalogue download.
+    await waitFor(() =>
+      expect(api.requests.some((r) => r.startsWith('/products?limit=0'))).toBe(true),
+    );
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    const before = api.requests.length;
+
+    const search = screen.getByRole('searchbox', { name: 'Search stock by name' });
+    await user.type(search, 'phone');
+    await waitFor(() => expect(param('q')).toBe('phone'));
+
+    // Results are on screen as soon as the term commits - no loading state.
+    expect(screen.queryByText('Loading stock…')).not.toBeInTheDocument();
+    expect(visibleTitles()[0]).toBe('Phone 01');
+    expect(screen.getByText(/Showing 1–20 of 25 items/)).toBeInTheDocument();
+    expect(api.requests.slice(before).some((r) => r.includes('/search'))).toBe(false);
+
+    // Matches the server's rule: "number 7" only appears in descriptions.
+    await user.clear(search);
+    await user.type(search, 'number 7');
+    await waitFor(() => expect(param('q')).toBe('number 7'));
+    expect(visibleTitles()).toEqual(['Apple 07', 'Laptop 07', 'Phone 07']);
   });
 });
 
