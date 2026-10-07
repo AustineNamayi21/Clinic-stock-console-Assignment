@@ -10,6 +10,28 @@ I built an internal clinic stock console that allows a staff member to sign in, 
 
 **GitHub repository:** https://github.com/AustineNamayi21/Clinic-stock-console-Assignment.git
 
+## Running locally
+
+Requires Node 20 or later (CI uses Node 22).
+
+```bash
+npm install
+npm run dev
+```
+
+The app runs at `http://localhost:5173`. Sign in with any DummyJSON user, for example `emilys` / `emilyspass`.
+
+| Script                 | What it does                           |
+| ---------------------- | -------------------------------------- |
+| `npm run dev`          | Vite dev server                        |
+| `npm run build`        | Type-check, then production build      |
+| `npm run preview`      | Serve the production build locally     |
+| `npm run lint`         | ESLint                                 |
+| `npm run format`       | Prettier, writing changes              |
+| `npm run format:check` | Prettier, failing on unformatted files |
+| `npm test`             | Vitest, single run                     |
+| `npm run test:watch`   | Vitest in watch mode                   |
+
 ---
 
 # 1. Project overview
@@ -68,19 +90,21 @@ The main pages are:
 
 The main reusable UI components are:
 
-- `AppShell`
-- `StockTable`
-- `StockControls`
+- `AppShell` — header, sign-out, skip link and the `<main>` focus target
+- `StockTable` — table on wider screens, stacked cards on narrow ones
+- `CategoryFilter`, `SortControl` and `Pagination` (in `StockControls.tsx`)
 - `SearchBox`
 - `StockCorrectionForm`
-- `StockFigure`
-- `DataState`
+- `StockFigure` (in `StockBadge.tsx`)
+- `LoadingState`, `EmptyState` and `ErrorState` (in `DataState.tsx`)
 
 I also have an `AuthGuard` route component that protects the authenticated application routes.
 
 `StockFigure` is the exported component in `StockBadge.tsx`. The component was originally named around the stock-badge idea, but the exported component is now `StockFigure`.
 
 The stock list is presented as a table on larger screens. At the small-screen breakpoint it changes to stacked cards instead of trying to squeeze all of the table columns into a narrow viewport.
+
+Each item's stock level is shown with a status word as well as a colour: a count of 0 is **Out of stock**, 1–10 is **Low**, and anything above that is **In stock**. The thresholds live in `src/lib/stockLevel.ts`, separate from the component, so they can be reused and tested without React.
 
 ---
 
@@ -102,6 +126,14 @@ This is handled by `useSearchParamsState`.
 I chose this because these values describe the current stock-list view. Keeping them in the URL means that refreshing the page or copying the URL does not lose the current search, filter, sort or page.
 
 I also reset the page when a search or filter changes. For example, if I am on page 8 and then apply a filter that only has two pages, the application should not leave me looking at an empty page 8.
+
+URL values are validated when they are read, because a shared link can contain anything:
+
+- An unrecognised `sortBy` or `order` falls back to the default (name, A–Z).
+- A page that isn't a positive whole number falls back to page 1.
+- A valid page that is past the end of the results — for example from an old shared link — is moved to the last page once the real total is known.
+
+Typing a search replaces the current history entry instead of adding one, so the Back button isn't filled with every search term. Changing the category, sort or page does add an entry, so Back returns to the previous view.
 
 ## Server state
 
@@ -125,6 +157,10 @@ Authentication is handled by `AuthContext`.
 
 The access token, refresh token and user information are stored in `sessionStorage`. This allows the session to survive a browser refresh without making the authentication state permanent across browser sessions.
 
+This is a trade-off rather than an ideal. Anything in `sessionStorage` can be read by a script running on the page, so it is not protected against XSS. I chose it over `localStorage` because it is cleared when the tab closes, and over memory-only storage because ward staff refresh and background tablets constantly, and being signed out on every refresh would be worse for them. DummyJSON returns the refresh token in the response body, so a properly protected option isn't available here. With a real backend, the refresh token would be an `httpOnly`, `SameSite` cookie and the frontend would not hold it at all.
+
+Signing out clears the tokens, the stored user and any stock corrections made in that session.
+
 ---
 
 # 5. API design and fetching
@@ -143,6 +179,12 @@ The HTTP client itself is in `src/api/client.ts`.
 The React Query integration is in `src/hooks/useStock.ts`.
 
 The stock list uses a page size of 20. DummyJSON provides 194 products, so the normal list is paginated rather than loading all products into the interface at once.
+
+Query keys are built from the exact URL values that produce each response, so going back to a search, filter, sort or page I have already seen is an instant cache hit. Caching is tuned per kind of data:
+
+- **Stock list and item detail:** treated as fresh for 30 seconds. Stock counts can change after a physical count at any time, so I would rather refetch slightly too often than show a stale count.
+- **Categories:** treated as fresh for 10 minutes, because they rarely change and refetching them on every visit would waste requests on a patchy connection.
+- **Failed list, item and category requests:** retried once automatically before an error state is shown. Saves are not retried automatically, so a correction is never sent twice without the user knowing.
 
 ---
 
@@ -177,6 +219,8 @@ When both a search term and category are active, I:
 
 This is necessary because the API does not provide the exact combined query behaviour required by the interface.
 
+This combined path loads every search match, which is fine for a 194-item catalogue but would not scale to a real one. With a real backend, the server would apply the search and category together and paginate the result.
+
 The current search input is debounced by 300ms. This means I do not send a request for every individual keystroke.
 
 The URL remains the source of truth for the committed search value, so the current search state is also preserved when the page is refreshed or the URL is copied.
@@ -195,6 +239,8 @@ This represents the situation where an older search request takes longer to retu
 
 The search input is debounced, and the resulting query state is managed through TanStack Query. Different search terms produce different query keys, so an older response is not treated as the current search simply because it happens to return later.
 
+The older request is also cancelled, not just ignored. Each query passes TanStack Query's `AbortSignal` through to `fetch`, so when a newer search replaces an older one, the older request is aborted rather than left to finish in the background.
+
 I specifically checked this behaviour because the assessment calls out the delayed-search case as something that can expose race conditions.
 
 ---
@@ -207,11 +253,12 @@ The login request uses:
 expiresInMins: 1
 ```
 
-I implemented token refresh in `src/api/client.ts`.
+The work is split across two files:
 
-When an API request returns `401`, the client attempts to refresh the authentication session and retries the original request once.
+- `src/api/client.ts` catches a `401`, asks for a refresh and retries the original request once.
+- `src/auth/AuthContext.tsx` makes the refresh request, stores the new tokens and owns the shared refresh promise.
 
-I also use a shared refresh promise so that if multiple requests receive a `401` at approximately the same time, they can share the same refresh operation instead of all starting separate refresh requests.
+I use a shared refresh promise so that if multiple requests receive a `401` at approximately the same time, they can share the same refresh operation instead of all starting separate refresh requests.
 
 The retry uses the token that the refresh returned. The client reads the current token at request time rather than capturing it when the client is created, because a refresh can complete while a request is still in flight.
 
@@ -221,13 +268,17 @@ The same logic applies when the page is reloaded. Access tokens only last a minu
 
 The intention here was to prevent token expiry from producing a blank application or unnecessarily losing the user's current URL state.
 
+The `returnTo` value is only honoured if it is a path inside the app (it must start with `/` and not `//`). Without that check, a crafted link could send someone to another site straight after they sign in.
+
 ---
 
 # 10. Stock correction
 
 Stock correction is handled on the individual item page.
 
-The form validates the entered quantity before submitting the change.
+The form validates the entered quantity before submitting the change: it must be a whole number of 0 or more. The validation message is linked to the input with `aria-describedby`, and **Save count** is disabled while the number is unchanged or a save is in progress.
+
+If the item is refetched in the background while someone is typing, the form does not overwrite the number they are entering.
 
 When the mutation starts, the displayed item is updated optimistically and the correction is written to the session override store straight away. If the request fails, both the displayed value and the previous override are restored.
 
@@ -240,6 +291,8 @@ The `PUT` request returns a successful response, but the updated stock value is 
 Because of that, I added `src/lib/stockOverrides.ts` to keep successful stock corrections available during the current session.
 
 This is a frontend workaround for the limitations of the assessment API. In a production application, I would replace this with a persistent backend and database.
+
+One known limitation follows from this: sorting by stock is done by DummyJSON using its original values, so a corrected item can appear out of order in a list sorted by stock. A real backend that stored the correction would sort it correctly.
 
 ---
 
@@ -257,7 +310,9 @@ The stock list and item detail screens use these states for their main API reque
 
 The category control is disabled while categories are loading.
 
-The item detail page also handles an invalid or unavailable item rather than assuming that a valid product will always be returned.
+The item detail page also handles an invalid or unavailable item rather than assuming that a valid product will always be returned. A malformed link such as `/items/abc` shows an "Invalid item link" message. An ID that doesn't exist, such as `/items/99999`, currently shows the general "Couldn't load this item" error with a retry button; a dedicated "item not found" message would be clearer, because retrying cannot help in that case.
+
+Unknown routes show a "Page not found" message instead of a blank screen.
 
 ---
 
@@ -276,6 +331,11 @@ The application includes:
 - Status messages using appropriate ARIA roles
 - An alert state for request errors
 - A predictable main-content focus target during route navigation
+- A screen-reader announcement while a search is pending ("Searching for …")
+- A live region on the pagination summary, so the new page number is announced
+- Validation errors linked to their input with `aria-describedby` and `aria-invalid`
+- Stock status shown as a word as well as a colour, never colour alone
+- Animations reduced to near zero when the operating system asks for reduced motion
 
 `AppShell` contains the skip link and the main content target.
 
@@ -297,6 +357,10 @@ The primary accent is **teal**, using `#0b6e63`, with:
 - Responsive layouts for the stock list and forms
 
 I used Tailwind CSS for the styling and kept the visual design fairly restrained so that the stock information remains the main focus.
+
+Instead of Tailwind's numbered colour scale, I defined a small set of named colours in `src/index.css`, each with one job: `ink` (main text), `slate` (secondary text), `paper` (page background), `surface` (cards and inputs), `line` (borders), `teal` (actions and focus), and `amber`, `red` and `green` for stock and save status. Every text colour meets the WCAG AA contrast ratio of 4.5:1 against the backgrounds it is used on; the lowest is amber on the page background at 4.6:1.
+
+Stock counts use tabular figures, so digits keep the same width and a number doesn't shift when a count changes. The stock count is the largest, most prominent text in each row and on the item page, because it is the main information in the app.
 
 ---
 
@@ -352,10 +416,14 @@ The main project configuration files are:
 
 ```text
 .editorconfig
-eslint.config.js
+.gitattributes
+.husky/ (pre-commit and commit-msg hooks)
 .prettierrc.json
+.prettierignore
 commitlint.config.js
+eslint.config.js
 package.json
+tsconfig.json, tsconfig.app.json, tsconfig.node.json
 vercel.json
 vite.config.ts
 ```
@@ -376,7 +444,7 @@ Individual items are available through:
 /items/:id
 ```
 
-This means an item can be opened directly using its URL rather than requiring navigation from the stock list.
+This means an item can be opened directly using its URL rather than requiring navigation from the stock list. If someone opens a shared link while signed out, they are sent to the login page and then taken back to that item after signing in.
 
 I also added the Vercel SPA rewrite configuration so that client-side routes can be loaded directly without Vercel treating them as missing server-side files.
 
@@ -454,16 +522,16 @@ I use Husky and lint-staged for pre-commit checks. lint-staged runs ESLint and P
 
 The commit message hook runs commitlint and checks Conventional Commit-style messages.
 
-Examples include:
+Examples from this repository's history:
 
 ```text
-feat: add stock correction form
-fix: handle expired access token
-test: cover search parameter state
-docs: update assessment README
+feat: add products API with search and category handling
+test: add tests for list fetching, URL state and stock overrides
+ci: add GitHub Actions workflow
+fix: send refreshed token on retry, restore expired sessions, fix clear filters
 ```
 
-The project also contains `.editorconfig` to keep basic editor settings consistent.
+The project also contains `.editorconfig` to keep basic editor settings consistent, and `.gitattributes`, which stores line endings as LF in the repository so a Windows working copy doesn't produce changes that a Linux CI runner rejects.
 
 ---
 
@@ -471,20 +539,21 @@ The project also contains `.editorconfig` to keep basic editor settings consiste
 
 The GitHub Actions workflow runs on pull requests targeting `main` and on pushes to `main`.
 
-The workflow runs:
+On a clean Ubuntu runner with Node 22, the workflow runs:
 
-1. `npm ci`
-2. Prettier formatting check
-3. ESLint
-4. commitlint on pull requests
-5. Vitest tests
-6. Production build
+1. Checkout with full history (`fetch-depth: 0`), which commitlint needs to compare a pull request's commits with `main`
+2. `npm ci`, which installs the exact versions in the lockfile
+3. Prettier formatting check
+4. ESLint
+5. commitlint over the pull request's commits (pull requests only)
+6. Vitest tests
+7. Production build, which also type-checks the project
 
-The application is deployed using Vercel.
+All of these run in a single `verify` job, so any failing step fails the job.
 
-The deployment branch is `main`.
+The application is deployed using Vercel, and the deployment branch is `main`. `vercel.json` rewrites every route to `index.html`, so a deep link such as `/items/42` works on a fresh page load in production.
 
-The GitHub Actions workflow performs the verification checks, while Vercel handles the application deployment.
+**Which checks can block a merge:** at the moment, none of them do. Branch protection is not enabled on `main`, so a failing `verify` job marks the pull request or commit as failed but does not stop a merge or a direct push. Vercel also deploys `main` independently of GitHub Actions, so a commit that fails CI would still be deployed. The next step would be a branch protection rule on `main` that requires pull requests and a passing `verify` check, which would make every check above a merge gate.
 
 ---
 
