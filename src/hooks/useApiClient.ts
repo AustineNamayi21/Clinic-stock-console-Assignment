@@ -3,11 +3,12 @@ import { useAuth } from '../auth/AuthContext';
 import { createApiClient, type ApiClient } from '../api/client';
 
 export function useApiClient(): ApiClient {
-  const { accessToken, refreshAccessToken } = useAuth();
-  // Re-created only when the access token identity changes; refreshAccessToken
-  // is stable (useCallback with empty deps in AuthProvider).
+  const { getAccessToken, refreshAccessToken } = useAuth();
+  // Both functions are stable, so the client is created once. The token is
+  // read at request time through getAccessToken - never captured here -
+  // so a retry after a refresh always sends the new token.
   return useMemo(
-    () => createApiClient(() => accessToken, refreshAccessToken),
-    [accessToken, refreshAccessToken],
+    () => createApiClient(getAccessToken, refreshAccessToken),
+    [getAccessToken, refreshAccessToken],
   );
 }

@@ -47,6 +47,30 @@ describe('useSearchParamsState', () => {
     expect(result.current.state.q).toBe('gauze');
   });
 
+  it('clearFilters removes a search on its own', () => {
+    const { result } = renderWithRouter(['/?q=zzzz&page=2']);
+
+    act(() => result.current.clearFilters());
+
+    expect(result.current.state).toMatchObject({ q: '', category: '', page: 1 });
+  });
+
+  it('clearFilters removes search and category together, keeping the sort', () => {
+    const { result } = renderWithRouter([
+      '/?q=phone&category=smartphones&sortBy=stock&order=desc',
+    ]);
+
+    act(() => result.current.clearFilters());
+
+    expect(result.current.state).toEqual({
+      q: '',
+      category: '',
+      sortBy: 'stock',
+      order: 'desc',
+      page: 1,
+    });
+  });
+
   it('changing only the page does not reset other committed state', () => {
     const { result } = renderWithRouter(['/?q=gauze&category=wound-care']);
 

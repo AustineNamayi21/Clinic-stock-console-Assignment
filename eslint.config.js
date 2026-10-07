@@ -18,5 +18,14 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // Visible in review without blocking a PR outright.
+      '@typescript-eslint/no-explicit-any': 'warn',
+      // `_`-prefixed names mark a deliberately unused argument or variable.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+    },
   },
 ]);

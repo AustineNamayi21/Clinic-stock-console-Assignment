@@ -7,7 +7,12 @@ import {
   updateStock,
   type StockListParams,
 } from '../api/products';
-import { applyStockOverride, setStockOverride } from '../lib/stockOverrides';
+import {
+  applyStockOverride,
+  clearStockOverride,
+  getStockOverride,
+  setStockOverride,
+} from '../lib/stockOverrides';
 import type { Product } from '../api/types';
 
 /** Query keys are built directly from the committed URL state that
@@ -66,24 +71,28 @@ export function useUpdateStock(productId: number) {
     onMutate: async (stock: number) => {
       await queryClient.cancelQueries({ queryKey: stockKeys.item(productId) });
       const previous = queryClient.getQueryData<Product>(stockKeys.item(productId));
+      const previousOverride = getStockOverride(productId);
       // Optimistic update: reflect the new count immediately rather than
       // leaving the user waiting with no feedback on a slow connection.
+      //
+      // DummyJSON doesn't persist the write server-side, so the override
+      // store is the session-scoped source of truth for corrected counts.
+      // It's written here, not on success: the queries' `select` applies
+      // overrides on top of cached data, so an older override for this item
+      // would otherwise hide the optimistic value until the save finished.
+      setStockOverride(productId, stock);
       queryClient.setQueryData<Product>(stockKeys.item(productId), (old) =>
         old ? { ...old, stock } : old,
       );
-      return { previous };
+      return { previous, previousOverride };
     },
     onError: (_err, _stock, context) => {
-      // Roll back the optimistic value if the request failed.
+      // Roll back both the override and the cached value if the request failed.
+      if (context?.previousOverride === undefined) clearStockOverride(productId);
+      else setStockOverride(productId, context.previousOverride);
       if (context?.previous) {
         queryClient.setQueryData(stockKeys.item(productId), context.previous);
       }
-    },
-    onSuccess: (_data, stock) => {
-      // DummyJSON doesn't persist the write server-side, so a later
-      // background refetch would silently revert this. The override store
-      // is the session-scoped source of truth for this item from here on.
-      setStockOverride(productId, stock);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: stockKeys.item(productId) });

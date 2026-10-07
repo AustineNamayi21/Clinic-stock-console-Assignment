@@ -36,6 +36,8 @@ export interface UseSearchParamsStateResult {
   setCategory: (category: string) => void;
   setSort: (sortBy: SortField, order: SortOrder) => void;
   setPage: (page: number) => void;
+  /** Clears search and category together, in one URL update. */
+  clearFilters: () => void;
 }
 
 /**
@@ -111,7 +113,21 @@ export function useSearchParamsState(): UseSearchParamsStateResult {
     [setSearchParams],
   );
 
-  return { state, setSearch, setCategory, setSort, setPage };
+  // Clearing search and category must be a single URL update. Calling
+  // setSearch('') then setCategory('') doesn't work: React Router hands
+  // each functional update the params from the current render, so the
+  // second call starts from a URL that still has `q` and puts it back.
+  const clearFilters = useCallback(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('q');
+      next.delete('category');
+      next.set('page', '1');
+      return next;
+    });
+  }, [setSearchParams]);
+
+  return { state, setSearch, setCategory, setSort, setPage, clearFilters };
 }
 
 export { DEFAULTS as searchParamsDefaults };

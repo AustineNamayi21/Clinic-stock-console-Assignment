@@ -30,6 +30,12 @@ export function setStockOverride(productId: number, stock: number): void {
   writeAll(all);
 }
 
+export function clearStockOverride(productId: number): void {
+  const all = readAll();
+  delete all[productId];
+  writeAll(all);
+}
+
 /** Applies any known override onto a product before it reaches the UI. */
 export function applyStockOverride<T extends { id: number; stock: number }>(
   product: T,

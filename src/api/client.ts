@@ -11,11 +11,18 @@ export interface ApiClient {
 }
 
 /**
- * Builds a small typed client bound to the current access token and a
- * refresh function. A 401 triggers exactly one refresh attempt (the auth
- * context de-dupes concurrent refreshes) and the original request is
- * retried once with the new token. A second 401 after that is a real
- * auth failure and is surfaced as such.
+ * Builds a small typed client. `getAccessToken` must return the *current*
+ * token at call time (not a value captured when the client was created),
+ * because a refresh can happen while a request is in flight.
+ *
+ * A 401 is handled in one of two ways:
+ * - If the token has already changed since this request was sent (another
+ *   request refreshed it in the meantime), retry once with the current
+ *   token - no second refresh needed.
+ * - Otherwise trigger a refresh (the auth context de-dupes concurrent
+ *   refreshes) and retry once with the token that refresh returned.
+ *
+ * A 401 on the retry is a real auth failure and is surfaced as such.
  */
 export function createApiClient(
   getAccessToken: () => string | null,
@@ -24,10 +31,10 @@ export function createApiClient(
   async function doFetch<T>(
     path: string,
     options: RequestOptions = {},
-    isRetry = false,
+    retryToken?: string,
   ): Promise<T> {
     const { skipAuth, headers, ...rest } = options;
-    const token = getAccessToken();
+    const token = retryToken ?? getAccessToken();
 
     const res = await fetch(`${API_BASE}${path}`, {
       ...rest,
@@ -38,13 +45,24 @@ export function createApiClient(
       },
     });
 
-    if (res.status === 401 && !skipAuth && !isRetry) {
-      try {
-        await refreshAccessToken();
-      } catch {
-        throw new ApiError('Session expired', 401);
+    if (res.status === 401 && !skipAuth && retryToken === undefined) {
+      const current = getAccessToken();
+      if (current && current !== token) {
+        return doFetch<T>(path, options, current);
       }
-      return doFetch<T>(path, options, true);
+
+      let fresh: string;
+      try {
+        fresh = await refreshAccessToken();
+      } catch (err) {
+        // The API rejected the refresh: the session is over (the auth
+        // context has already cleared it). Anything else - typically a
+        // network failure - is rethrown as-is so it reads as a connection
+        // problem, not a sign-out.
+        if (err instanceof ApiError) throw new ApiError('Session expired', 401);
+        throw err;
+      }
+      return doFetch<T>(path, options, fresh);
     }
 
     if (!res.ok) {

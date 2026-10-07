@@ -7,7 +7,8 @@ import { StockTable } from '../components/StockTable';
 import { LoadingState, EmptyState, ErrorState } from '../components/DataState';
 
 export function StockListPage() {
-  const { state, setSearch, setCategory, setSort, setPage } = useSearchParamsState();
+  const { state, setSearch, setCategory, setSort, setPage, clearFilters } =
+    useSearchParamsState();
   const categoriesQuery = useCategories();
   const listQuery = useStockList(state);
 
@@ -22,11 +23,6 @@ export function StockListPage() {
   }, [listQuery.data, setPage]);
 
   const hasFilters = Boolean(state.q || state.category);
-
-  function clearFilters() {
-    setSearch('');
-    setCategory('');
-  }
 
   return (
     <div>

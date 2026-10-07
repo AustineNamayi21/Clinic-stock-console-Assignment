@@ -213,7 +213,11 @@ When an API request returns `401`, the client attempts to refresh the authentica
 
 I also use a shared refresh promise so that if multiple requests receive a `401` at approximately the same time, they can share the same refresh operation instead of all starting separate refresh requests.
 
-If refreshing the session fails, the authentication state is cleared and the user is returned to the login flow.
+The retry uses the token that the refresh returned. The client reads the current token at request time rather than capturing it when the client is created, because a refresh can complete while a request is still in flight.
+
+If DummyJSON rejects the refresh, the authentication state is cleared and `AuthGuard` returns the user to the login page with a `returnTo` parameter, so they land back on the same URL after signing in again. If the refresh fails because the network dropped, the session is kept and the request fails as a connection error with a retry button, so losing signal on a ward does not sign anyone out.
+
+The same logic applies when the page is reloaded. Access tokens only last a minute, so on reload the stored token has usually expired. The app refreshes it before deciding the session is over, instead of treating an expired access token as a signed-out user.
 
 The intention here was to prevent token expiry from producing a blank application or unnecessarily losing the user's current URL state.
 
@@ -225,7 +229,7 @@ Stock correction is handled on the individual item page.
 
 The form validates the entered quantity before submitting the change.
 
-When the mutation starts, the displayed item can be updated optimistically. If the request fails, the previous value is restored.
+When the mutation starts, the displayed item is updated optimistically and the correction is written to the session override store straight away. If the request fails, both the displayed value and the previous override are restored.
 
 After the mutation settles, the relevant item and stock-list queries are invalidated.
 
@@ -247,7 +251,7 @@ These include:
 
 - Loading state
 - Empty state
-- Error state with retry
+- Error state with retry, signalled by an icon and text as well as colour
 
 The stock list and item detail screens use these states for their main API requests.
 
@@ -303,12 +307,14 @@ The relevant project structure is:
 ```text
 src/
 ├── api/
+│   ├── client.test.ts
 │   ├── client.ts
 │   ├── config.ts
 │   ├── products.test.ts
 │   ├── products.ts
 │   └── types.ts
 ├── auth/
+│   ├── AuthContext.test.tsx
 │   └── AuthContext.tsx
 ├── components/
 │   ├── AppShell.tsx
@@ -319,8 +325,10 @@ src/
 │   ├── StockCorrectionForm.tsx
 │   └── StockTable.tsx
 ├── hooks/
+│   ├── useApiClient.ts
 │   ├── useSearchParamsState.test.tsx
 │   ├── useSearchParamsState.ts
+│   ├── useStock.test.tsx
 │   └── useStock.ts
 ├── lib/
 │   ├── stockLevel.ts
@@ -333,6 +341,7 @@ src/
 ├── routes/
 │   └── AuthGuard.tsx
 ├── test/
+│   ├── fakeApi.ts
 │   └── setup.ts
 ├── App.tsx
 ├── index.css
@@ -343,7 +352,7 @@ The main project configuration files are:
 
 ```text
 .editorconfig
-.eslintrc / eslint.config.js
+eslint.config.js
 .prettierrc.json
 commitlint.config.js
 package.json
@@ -391,10 +400,37 @@ I focused the tests on areas where a small change could easily introduce a behav
 - Reading state from a copied URL
 - Resetting the page when a filter changes
 - Keeping the active filters while changing pages
+- "Clear filters" removing the search and category in a single URL update
 
 ## Stock override tests
 
 `src/lib/stockOverrides.test.ts` checks that stock overrides are returned correctly and remain available on repeated reads.
+
+## Token refresh tests
+
+`src/api/client.test.ts` covers the 401 path in the HTTP client:
+
+- The retry after a refresh sends the token the refresh returned, not the expired one
+- A 401 for a token that another request has already replaced is retried without a second refresh
+- A rejected refresh is reported as "Session expired"
+- A network failure during refresh is reported as a network error, not a sign-out
+
+## Session tests
+
+`src/auth/AuthContext.test.tsx` runs the auth context against a small fake DummyJSON (`src/test/fakeApi.ts`) that only accepts the current access token. It covers:
+
+- Reloading with an expired access token refreshes the session instead of signing out
+- A rejected refresh token ends the session
+- A network failure on reload keeps the stored session
+- Concurrent refresh calls share one `/auth/refresh` request
+
+## Stock correction tests
+
+`src/hooks/useStock.test.tsx` covers:
+
+- Saving a correction after the access token has expired mid-session
+- A second correction of the same item showing immediately while it saves
+- A failed save restoring the previous corrected value
 
 I chose these areas because they contain actual application logic rather than simply checking whether a component renders.
 
@@ -410,11 +446,11 @@ The formatting check is:
 npm run format:check
 ```
 
-ESLint uses the recommended configurations for JavaScript, TypeScript, React Hooks and React Refresh used by the project.
+ESLint uses the recommended configurations for JavaScript, TypeScript, React Hooks and React Refresh used by the project, with two adjustments: `no-explicit-any` is a warning rather than an error, so an explicit `any` stays visible in review without blocking a PR, and unused variables and arguments prefixed with `_` are allowed, which is the usual way to mark a deliberately unused callback argument.
 
 There is also a local ESLint exception in `AuthContext.tsx` for the React Refresh rule, with an explanatory comment.
 
-I use Husky and lint-staged for pre-commit checks.
+I use Husky and lint-staged for pre-commit checks. lint-staged runs ESLint and Prettier on staged TypeScript files, and Prettier on staged JSON, Markdown, CSS and YAML files, so the CI workflow file is formatted before it is committed.
 
 The commit message hook runs commitlint and checks Conventional Commit-style messages.
 
@@ -615,7 +651,7 @@ The authentication refresh flow is another example.
 
 The implementation problem was not simply refreshing a token after receiving a 401. There was also the possibility that several requests could fail at approximately the same time.
 
-Thinking through that case led to the shared refresh promise in `client.ts`. This means concurrent requests can wait for the same refresh operation instead of each starting another one.
+Thinking through that case led to the shared refresh promise in `AuthContext.tsx`, which `client.ts` calls when it receives a 401. This means concurrent requests can wait for the same refresh operation instead of each starting another one.
 
 That made the implementation closer to the behaviour I wanted from the application.
 
@@ -651,7 +687,20 @@ I would rather identify that honestly than claim that I wrote and fully understo
 
 ---
 
-# 27. Further development
+# 27. Fixes after review
+
+After the build was finished, I asked Claude to review the whole project. It found four bugs that the original tests did not cover. Each was reproduced with a test first, fixed, and now has a regression test that fails against the old code.
+
+- **The retry after a token refresh sent the expired token.** The API client captured the access token when it was created, so the retry after a successful refresh went out with the old token and failed. In practice, saving a correction more than a minute after the last request failed on the first attempt.
+- **Reloading after the token expired signed the user out.** Session restore deleted the session as soon as `/auth/me` rejected the stored access token, even though the refresh token was still valid.
+- **"Clear filters" did not clear the search.** It made two URL updates in a row, and the second one started from search params that still contained `q`, so the search came back.
+- **A second correction of the same item did not show immediately.** The earlier session override was reapplied over the optimistic value until the save finished.
+
+The review also found that a rejected refresh left the user on an error screen instead of returning them to the login page, and that a failed refresh logged an unhandled promise rejection. Both are fixed.
+
+---
+
+# 28. Further development
 
 I completed and tested the implementation against the requirements of the assessment, including the main application flows, error handling, authentication behaviour, URL state, responsive behaviour, keyboard interaction, API edge cases and the required development checks.
 
@@ -665,6 +714,6 @@ If this were being developed into a production inventory system rather than a ta
 
 These are extensions to the current system rather than gaps in the assessment implementation. I kept the submitted solution focused on the requirements and constraints of the take-home assessment.
 
-# 28. Time spent
+# 29. Time spent
 
 I spent approximately 5 hours cumulatively working on this project across different days.
